@@ -1,0 +1,44 @@
+{
+  "surfing": [
+    {
+      "id": "website",
+      "label": "Website",
+      "labelKey": "markdown.examples.website",
+      "code": "url: https://www.apple.com"
+    },
+    {
+      "id": "customHeight",
+      "label": "Custom height",
+      "labelKey": "markdown.examples.customHeight",
+      "code": "url: https://www.apple.com\nheight: 480"
+    }
+  ],
+  "youtube": [
+    {
+      "id": "video",
+      "label": "YouTube video",
+      "labelKey": "markdown.examples.video",
+      "code": "https://www.youtube.com/watch?v=UF8uR6Z6KLc"
+    },
+    {
+      "id": "customHeight",
+      "label": "Custom height",
+      "labelKey": "markdown.examples.customHeight",
+      "code": "url: https://www.youtube.com/watch?v=UF8uR6Z6KLc\nheight: 480"
+    }
+  ],
+  "x": [
+    {
+      "id": "post",
+      "label": "X post",
+      "labelKey": "markdown.examples.post",
+      "code": "https://x.com/jack/status/20"
+    },
+    {
+      "id": "customHeight",
+      "label": "Custom height",
+      "labelKey": "markdown.examples.customHeight",
+      "code": "url: https://x.com/jack/status/20\nheight: 500"
+    }
+  ]
+}

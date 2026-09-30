@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "x",
+  "displayName": "X",
+  "language": "X",
+  "template": "https://platform.twitter.com/embed/Tweet.html?id={value}",
+  "kind": "x",
+  "valueParser": "x-post-id",
+  "presentation": {
+    "initialHeight": 180,
+    "autoSize": true,
+    "fullWidth": true,
+    "minHeight": 180,
+    "maxHeight": 1200,
+    "fitWidth": {
+      "naturalWidth": 515,
+      "maxScale": 1.3
+    }
+  },
+  "theme": {
+    "queryParameter": "theme",
+    "values": {
+      "light": "light",
+      "dark": "dark"
+    }
+  },
+  "order": 20
+}

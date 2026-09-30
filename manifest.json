@@ -1,0 +1,17 @@
+{
+  "apiVersion": 5,
+  "id": "surfing",
+  "name": "Surfing",
+  "version": "2.0.0",
+  "description": "Embedded browser: open websites as workspace tabs with isolated profiles, history and ad-blocking — and let the assistant drive pages (navigate, click, fill forms, screenshot).",
+  "author": [
+    "valley"
+  ],
+  "authorUrl": [
+    "https://github.com/valley-app"
+  ],
+  "license": "MIT",
+  "minAppVersion": "0.1.0",
+  "isDesktopOnly": true,
+  "enabled": true
+}

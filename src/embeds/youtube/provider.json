@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "youtube",
+  "displayName": "YouTube",
+  "language": "youtube",
+  "template": "https://www.youtube.com/embed/{value}",
+  "kind": "youtube",
+  "valueParser": "youtube-video-id",
+  "presentation": {
+    "initialHeight": 360,
+    "autoSize": false,
+    "fullWidth": true,
+    "aspectRatio": "16 / 9",
+    "httpReferrer": "https://localhost/"
+  },
+  "order": 10
+}

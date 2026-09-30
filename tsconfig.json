@@ -1,0 +1,16 @@
+{
+  "extends": "@valley/plugin-tools/tsconfig",
+  "include": [
+    "src/**/*",
+    "tests/**/*",
+    "locales/**/*.json"
+  ],
+  "compilerOptions": {
+    "types": [
+      "node",
+      "vitest/globals",
+      "@testing-library/jest-dom"
+    ],
+    "resolveJsonModule": true
+  }
+}

@@ -1,0 +1,510 @@
+{
+  "icon": "icon.svg",
+  "main": "runtime/index.js",
+  "fileViews": {
+    ".url": {
+      "view": "surfing.url",
+      "icon": "globe",
+      "label": "Internet shortcut",
+      "labelKey": "surfing.shortcut.fileType",
+      "editable": true
+    },
+    ".mhtml": {
+      "view": "surfing.mhtml",
+      "icon": "globe",
+      "label": "Saved web page",
+      "labelKey": "surfing.archive.mhtml",
+      "editable": false
+    },
+    ".mht": {
+      "view": "surfing.mhtml",
+      "icon": "globe",
+      "label": "Saved web page",
+      "labelKey": "surfing.archive.mhtml",
+      "editable": false
+    },
+    ".har": {
+      "view": "surfing.har",
+      "icon": "globe",
+      "label": "HTTP archive",
+      "labelKey": "surfing.archive.har",
+      "editable": false
+    }
+  },
+  "indexState": "scoped",
+  "keepTabIcon": true,
+  "showOnNewTab": true,
+  "uiSlots": {
+    "left_sidebar": "surfing.panel",
+    "main_workspace": "surfing.page"
+  },
+  "slotDefaults": {
+    "left_sidebar": {
+      "order": 80
+    }
+  },
+  "settingsView": "surfing.settings",
+  "settingsSections": [
+    {
+      "id": "profiles",
+      "label": "Profiles",
+      "labelKey": "plugin.surfing.section.profiles",
+      "icon": "contact",
+      "description": "Each profile is its own cookies, logins and timeline. Open one to rename it, give it a mark, keep it out of the sidebar switcher or clear what it has stored.",
+      "descriptionKey": "auto.51208604863c"
+    },
+    {
+      "id": "embeds",
+      "label": "Embeds",
+      "labelKey": "plugin.surfing.section.embeds",
+      "icon": "globe",
+      "description": "Embed websites, YouTube videos and X posts with one surfing code block name.",
+      "descriptionKey": "auto.c92e0d67a4ca"
+    }
+  ],
+  "drivers": [
+    "browser",
+    "notes"
+  ],
+  "datasets": [
+    {
+      "id": "profiles",
+      "store": "durable",
+      "version": 1,
+      "title": "Browser profiles",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": {
+        "id": {
+          "type": "text"
+        },
+        "name": {
+          "type": "text"
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "icon": {
+          "type": "text",
+          "nullable": true
+        },
+        "hidden": {
+          "type": "boolean",
+          "nullable": true
+        }
+      },
+      "titleKey": "auto.f7370dcb640c"
+    },
+    {
+      "id": "profile_adblock",
+      "store": "durable",
+      "version": 1,
+      "title": "Profile ad-block settings",
+      "primaryKey": [
+        "profileId"
+      ],
+      "columns": {
+        "profileId": {
+          "type": "text"
+        },
+        "adblockEnabled": {
+          "type": "boolean"
+        },
+        "adblockRules": {
+          "type": "text"
+        },
+        "adblockFrequency": {
+          "type": "integer"
+        }
+      },
+      "titleKey": "surfing.dataset.profileAdblock"
+    },
+    {
+      "id": "tabs",
+      "store": "cache",
+      "version": 1,
+      "title": "Open browser tabs",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": {
+        "id": {
+          "type": "text"
+        },
+        "url": {
+          "type": "text"
+        },
+        "title": {
+          "type": "text"
+        },
+        "profileId": {
+          "type": "text"
+        }
+      },
+      "indexes": [
+        {
+          "id": "profile",
+          "columns": [
+            "profileId"
+          ]
+        }
+      ],
+      "titleKey": "auto.78a808ed0237"
+    },
+    {
+      "id": "visits",
+      "store": "durable",
+      "version": 1,
+      "title": "Browsing history",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": {
+        "id": {
+          "type": "text"
+        },
+        "profileId": {
+          "type": "text"
+        },
+        "url": {
+          "type": "text"
+        },
+        "title": {
+          "type": "text"
+        },
+        "ts": {
+          "type": "integer"
+        }
+      },
+      "indexes": [
+        {
+          "id": "profile_time",
+          "columns": [
+            "profileId",
+            "ts"
+          ]
+        }
+      ],
+      "titleKey": "auto.8c87074ab7ac"
+    },
+    {
+      "id": "saved_pages",
+      "store": "durable",
+      "version": 1,
+      "title": "Saved pages",
+      "primaryKey": [
+        "profileId",
+        "kind",
+        "url"
+      ],
+      "columns": {
+        "profileId": {
+          "type": "text"
+        },
+        "kind": {
+          "type": "text",
+          "enum": [
+            "favorite",
+            "reading"
+          ]
+        },
+        "url": {
+          "type": "text"
+        },
+        "title": {
+          "type": "text"
+        },
+        "ts": {
+          "type": "integer"
+        },
+        "position": {
+          "type": "integer"
+        }
+      },
+      "indexes": [
+        {
+          "id": "profile_kind_position",
+          "columns": [
+            "profileId",
+            "kind",
+            "position"
+          ]
+        }
+      ],
+      "titleKey": "auto.7f3842d0a2fe"
+    }
+  ],
+  "storageInventory": [
+    {
+      "id": "browser-profiles",
+      "kind": "browser-profile",
+      "store": "cache",
+      "driver": "browser"
+    }
+  ],
+  "provides": [
+    {
+      "id": "agent.toolProvider",
+      "kind": "service",
+      "version": "1.0.0"
+    },
+    {
+      "id": "web.activeContext",
+      "kind": "state",
+      "version": "1.0.0"
+    },
+    {
+      "id": "web.navigator",
+      "kind": "service",
+      "version": "1.0.0"
+    },
+    {
+      "id": "browser.automation",
+      "kind": "service",
+      "version": "1.0.0"
+    },
+    {
+      "id": "workspace.surface",
+      "kind": "extension",
+      "version": "1.0.0"
+    },
+    {
+      "id": "metadataPanel.segment",
+      "kind": "extension",
+      "version": "1.0.0"
+    },
+    {
+      "id": "workspace.details",
+      "kind": "extension",
+      "version": "1.0.0"
+    },
+    {
+      "id": "workspace.bookmark",
+      "kind": "service",
+      "version": "1.0.0"
+    }
+  ],
+  "consumes": [
+    {
+      "id": "selection.textAction",
+      "kind": "extension",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "guardPresets": {
+    "schemaVersion": 1,
+    "defaultPreset": "recommended",
+    "presets": [
+      {
+        "id": "recommended",
+        "label": "Recommended",
+        "version": 2,
+        "description": "Reading pages, screenshots and background URL fetches are free; navigating, clicking, typing, opening tabs and fetching in a visible tab confirm first.",
+        "descriptionKey": "surfing.guard.recommended",
+        "entries": {
+          "tools": {
+            "browser_open_tab": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_switch_tab": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_close_tab": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_navigate": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_back": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_forward": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_reload": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_click": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_type": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_select": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_scroll": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_press_key": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "browser_fetch_url": {
+              "decision": "allow"
+            }
+          },
+          "commands": {
+            "fetch-rendered": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            }
+          }
+        }
+      },
+      {
+        "id": "allow-browsing",
+        "label": "Allow browsing",
+        "labelKey": "auto.135f8a7fe1ef",
+        "version": 2,
+        "description": "Let the assistant browse autonomously — navigate, click, type, open tabs and fetch URLs without confirming each step.",
+        "descriptionKey": "surfing.guard.allow-browsing",
+        "entries": {
+          "tools": {
+            "browser_open_tab": {
+              "decision": "allow"
+            },
+            "browser_switch_tab": {
+              "decision": "allow"
+            },
+            "browser_close_tab": {
+              "decision": "allow"
+            },
+            "browser_navigate": {
+              "decision": "allow"
+            },
+            "browser_back": {
+              "decision": "allow"
+            },
+            "browser_forward": {
+              "decision": "allow"
+            },
+            "browser_reload": {
+              "decision": "allow"
+            },
+            "browser_click": {
+              "decision": "allow"
+            },
+            "browser_type": {
+              "decision": "allow"
+            },
+            "browser_select": {
+              "decision": "allow"
+            },
+            "browser_scroll": {
+              "decision": "allow"
+            },
+            "browser_press_key": {
+              "decision": "allow"
+            },
+            "browser_fetch_url": {
+              "decision": "allow"
+            }
+          },
+          "commands": {
+            "fetch-rendered": {
+              "decision": "allow"
+            }
+          }
+        }
+      },
+      {
+        "id": "read-only",
+        "label": "Read-only",
+        "version": 2,
+        "description": "The assistant can read and screenshot pages and fetch URLs in the background, but never navigate, click, type or open tabs.",
+        "descriptionKey": "surfing.guard.read-only",
+        "entries": {
+          "tools": {
+            "browser_open_tab": {
+              "decision": "deny"
+            },
+            "browser_switch_tab": {
+              "decision": "deny"
+            },
+            "browser_close_tab": {
+              "decision": "deny"
+            },
+            "browser_navigate": {
+              "decision": "deny"
+            },
+            "browser_back": {
+              "decision": "deny"
+            },
+            "browser_forward": {
+              "decision": "deny"
+            },
+            "browser_reload": {
+              "decision": "deny"
+            },
+            "browser_click": {
+              "decision": "deny"
+            },
+            "browser_type": {
+              "decision": "deny"
+            },
+            "browser_select": {
+              "decision": "deny"
+            },
+            "browser_scroll": {
+              "decision": "deny"
+            },
+            "browser_press_key": {
+              "decision": "deny"
+            },
+            "browser_fetch_url": {
+              "decision": "allow"
+            }
+          },
+          "commands": {
+            "fetch-rendered": {
+              "decision": "deny"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "locales": {
+    "en": "runtime/locales/en.json",
+    "de": "runtime/locales/de.json",
+    "es": "runtime/locales/es.json",
+    "fr": "runtime/locales/fr.json",
+    "zh-CN": "runtime/locales/zh-CN.json"
+  },
+  "runtime": {
+    "ui": "runtime/index.js",
+    "backend": "runtime/backend.js"
+  },
+  "permissions": {
+    "browser": {
+      "legacyPartitionPrefixes": [
+        "web-",
+        "web_"
+      ]
+    },
+    "network": {
+      "hosts": [
+        "easylist.to",
+        "raw.githubusercontent.com"
+      ],
+      "allowUserEndpoints": true
+    },
+    "storage": {
+      "vault": true
+    }
+  }
+}
