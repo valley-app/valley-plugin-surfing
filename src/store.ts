@@ -1,3 +1,4 @@
+import type { ProfilesSnapshot, PagesSnapshot } from './backend/data'
 import { uiText } from './localization'
 import { watchBrowserCosmetics } from './browserCosmetics'
 import { browserAutomation } from './browserAutomation'
@@ -21,11 +22,10 @@ import {
   DEFAULT_SETTINGS,
   INCOGNITO_PROFILE_ID,
   newProfileId,
-  normalizeProfile,
   normalizeProfileAdblock,
-  normalizeSavedPage,
   normalizeSettings,
   partitionFor,
+  profileSettingsPatchSchema,
   reconcileProfiles,
   searchUrl,
   switcherProfiles,
@@ -89,6 +89,7 @@ export interface WebSnapshot {
   readingList: SavedPage[]
   history: SavedPage[]
   agentActivity: WebAgentActivity[]
+  profileError?: string
 }
 
 interface WebviewEl {
@@ -113,8 +114,6 @@ const STORE_KEY = 'surfing.store'
 const PROFILES_DATASET = 'profiles'
 const PROFILE_ADBLOCK_DATASET = 'profile_adblock'
 const TABS_DATASET = 'tabs'
-const VISITS_DATASET = 'visits'
-const SAVED_PAGES_DATASET = 'saved_pages'
 /** Coalescing window for `setAdblock` pushes (ms) — see {@link WebStore.syncAdblock}. */
 const ADBLOCK_SYNC_DELAY = 250
 const AGENT_ACTIVITY_LIMIT = 50
@@ -191,6 +190,9 @@ export class WebStore {
   }
   private lastHistoryUrl = new Map<string, string>()
   private profileWrites: Promise<void> = Promise.resolve()
+  private profileLoad: Promise<void> | undefined
+  private profileRevisions = new Map<string, number>()
+  private committedProfiles: WebProfile[] = reconcileProfiles([])
 
   // ── Per-profile saved-page lists (favorites / reading list / timeline) ──────
   // Caches keyed by profileId, hydrated lazily from datasets via loadProfileLists.
@@ -229,6 +231,8 @@ export class WebStore {
   private browserGuests = new Map<string, string>()
   private hosts = new Set<string>()
   private reconcileTimer: number | null = null
+  private listRevisions = new Map<string, number>()
+  private offData: () => void
   private offBrowser: () => void
   private offState: () => void
   private agentTabId: string | null = null
@@ -239,6 +243,11 @@ export class WebStore {
     this.offBrowser = api.drivers.browser.onEvent((event) => {
       const id = [...this.browserGuests].find(([, guestId]) => guestId === event.guestId)?.[0]
       if (id) this.guestEvent(id, event)
+    })
+    this.offData = api.backend.on('data.changed', () => {
+      if (this.disposed) return
+      this.listLoads.clear()
+      void this.loadConfig().catch(error => this.setSnap({ profileError: error instanceof Error ? error.message : String(error) }))
     })
     const root = api.getState().vault?.path ?? null
     this.offState = api.subscribe(() => {
@@ -330,32 +339,23 @@ export class WebStore {
   /** Load persisted settings + profiles (call once on register). */
   loadConfig(): Promise<void> {
     if (this.disposed) return Promise.resolve()
-    return this.trackGuestWork(this.readConfig())
+    if (this.profileLoad) return this.profileLoad
+    const loading = this.trackGuestWork(this.readConfig()).finally(() => { if (this.profileLoad === loading) this.profileLoad = undefined })
+    this.profileLoad = loading
+    return loading
   }
 
   private async readConfig(): Promise<void> {
     const raw = this.api.settings.get()
     const settings = normalizeSettings(raw)
-    let profiles: WebProfile[] = []
-    try {
-      const recs = await this.rows(PROFILES_DATASET)
-      profiles = recs.map((r) => normalizeProfile(r)).filter((p): p is WebProfile => p != null)
-    } catch {
-      /* first run */
-    }
+    await this.profileWrites.catch(() => {})
+    const snapshot = await this.api.backend.call<ProfilesSnapshot>('data.profiles.list', {})
     if (this.disposed) return
-    profiles = reconcileProfiles(profiles)
-    try {
-      const adblockRows = await this.rows(PROFILE_ADBLOCK_DATASET)
-      const byProfile = new Map(adblockRows.flatMap((row) => typeof row.profileId === 'string' ? [[row.profileId, row] as const] : []))
-      profiles = profiles.map((profile) => ({
-        ...profile,
-        ...normalizeProfileAdblock(byProfile.get(profile.id) ?? {})
-      }))
-    } catch {
-      /* first run */
-    }
-    if (this.disposed) return
+    this.profileRevisions.set(PROFILES_DATASET, snapshot.revisions.profiles)
+    this.profileRevisions.set(PROFILE_ADBLOCK_DATASET, snapshot.revisions.adblock)
+    const profiles = snapshot.profiles
+    this.committedProfiles = structuredClone(profiles)
+    this.profileWrites = Promise.resolve()
     const normalProfileId = profiles.find((p) => !p.private)?.id ?? DEFAULT_PROFILE_ID
     const wanted = typeof raw.activeProfileId === 'string' ? raw.activeProfileId : DEFAULT_PROFILE_ID
     const activeProfileId = profiles.some((p) => p.id === wanted) ? wanted : normalProfileId
@@ -401,6 +401,7 @@ export class WebStore {
     this.setSnap({
       settings,
       profiles,
+      profileError: undefined,
       activeProfileId,
       tabs,
       favorites: this.favCache.get(activeProfileId) ?? [],
@@ -441,7 +442,7 @@ export class WebStore {
 
   private pushAdblock(): void {
     void this.trackGuestWork(this.api.backend.call('filter.configure', {
-      profiles: this.snap.profiles.map((profile) => ({
+      profiles: this.committedProfiles.map((profile) => ({
         partition: partitionFor(profile.id),
         enabled: profile.adblockEnabled,
         rules: profile.adblockRules,
@@ -461,32 +462,29 @@ export class WebStore {
 
   // ── Profiles ──────────────────────────────────────────────────────────────
   private persistProfiles(): Promise<void> {
-    const profiles = this.snap.profiles
-      .filter((profile) => !profile.private)
-      .map((profile) => ({
-        id: profile.id,
-        name: profile.name,
-        createdAt: profile.createdAt,
-        icon: profile.icon ?? null,
-        hidden: profile.hidden ?? null
-      })) as DatasetRecord[]
-    const adblock = this.snap.profiles.map((profile) => ({
-      profileId: profile.id,
-      adblockEnabled: profile.adblockEnabled,
-      adblockRules: profile.adblockRules,
-      adblockFrequency: profile.adblockFrequency
-    })) as DatasetRecord[]
-    const write = this.profileWrites.catch(() => {}).then(() => Promise.all([
-      this.replaceRows(PROFILES_DATASET, ['id'], profiles),
-      this.replaceRows(PROFILE_ADBLOCK_DATASET, ['profileId'], adblock)
-    ])).then(() => undefined)
+    const nextProfiles = structuredClone(this.snap.profiles)
+    const write = this.profileWrites.then(async () => {
+      const profiles = this.profileRevisions.get(PROFILES_DATASET), adblock = this.profileRevisions.get(PROFILE_ADBLOCK_DATASET)
+      if (profiles === undefined || adblock === undefined) throw new Error(uiText('surfing.error.profileChanged'))
+      const result = await this.api.backend.call<ProfilesSnapshot>('data.profiles.set', { profiles: nextProfiles, expected: { profiles, adblock } })
+      this.profileRevisions.set(PROFILES_DATASET, result.revisions.profiles)
+      this.profileRevisions.set(PROFILE_ADBLOCK_DATASET, result.revisions.adblock)
+      this.committedProfiles = result.profiles
+      if (!this.disposed) this.syncAdblock()
+    })
     this.profileWrites = write
+    void write.catch(() => {
+      this.setSnap({ profiles: structuredClone(this.committedProfiles), profileError: uiText('surfing.error.profileChanged') })
+      this.syncAdblock()
+    })
     return write
   }
 
   flushProfiles(): Promise<void> { return this.profileWrites }
 
   addProfile(name: string): string {
+    if (this.profileLoad || this.snap.profileError) throw new Error(this.snap.profileError || uiText('surfing.error.profileChanged'))
+    name = profileSettingsPatchSchema.parse({ name }).name!
     const id = newProfileId()
     const profile: WebProfile = {
       id,
@@ -501,93 +499,70 @@ export class WebStore {
     return id
   }
 
-  setProfileAdblockSetting<K extends 'adblockEnabled' | 'adblockRules' | 'adblockFrequency'>(
-    id: string,
-    key: K,
-    value: WebProfile[K]
-  ): void {
-    if (!this.snap.profiles.some((profile) => profile.id === id)) return
-    this.setSnap({
-      profiles: this.snap.profiles.map((profile) => profile.id === id ? { ...profile, [key]: value } : profile)
+  patchProfileSettings(id: string, patch: Partial<Pick<WebProfile, 'name' | 'icon' | 'hidden' | 'adblockEnabled' | 'adblockRules' | 'adblockFrequency'>>): Promise<void> {
+    if (this.profileLoad) throw new Error(uiText('surfing.error.profileChanged'))
+    patch = profileSettingsPatchSchema.parse(patch)
+    const current = this.snap.profiles.find(profile => profile.id === id)
+    if (!current) throw new Error(uiText('surfing.error.profile'))
+    if (this.snap.profileError) throw new Error(this.snap.profileError)
+    if (current.private && ['name', 'icon', 'hidden'].some(key => Object.hasOwn(patch, key))) throw new Error(uiText('surfing.error.incognito'))
+    if (patch.hidden === true && !canHideProfile(this.snap.profiles, id)) throw new Error(uiText('surfing.error.lastProfile'))
+    const profiles = this.snap.profiles.map(profile => {
+      if (profile.id !== id) return profile
+      const next = { ...profile, ...patch }
+      if (patch.name !== undefined) next.name = patch.name.trim() || profile.name
+      if (!next.icon) delete next.icon
+      if (!next.hidden) delete next.hidden
+      return next
     })
-    void this.persistProfiles()
-    this.syncAdblock()
+    const activeProfileId = this.snap.activeProfileId === id && patch.hidden === true
+      ? switcherProfiles(profiles)[0]?.id ?? this.snap.activeProfileId : this.snap.activeProfileId
+    const switched = activeProfileId !== this.snap.activeProfileId
+    this.setSnap({ profiles, activeProfileId })
+    const saved = this.persistProfiles()
+    if (switched) void saved.then(() => { void this.api.settings.set('activeProfileId', activeProfileId); void this.refreshActiveLists() }).catch(() => {})
+    return saved
+  }
+
+  setProfileAdblockSetting<K extends 'adblockEnabled' | 'adblockRules' | 'adblockFrequency'>(id: string, key: K, value: WebProfile[K]): void {
+    if (this.snap.profiles.some(profile => profile.id === id)) void this.patchProfileSettings(id, { [key]: value })
   }
 
   renameProfile(id: string, name: string): void {
-    if (id === INCOGNITO_PROFILE_ID) return
-    this.setSnap({ profiles: this.snap.profiles.map((p) => (p.id === id ? { ...p, name: name.trim() || p.name } : p)) })
-    void this.persistProfiles()
+    if (id !== INCOGNITO_PROFILE_ID) void this.patchProfileSettings(id, { name })
   }
 
-  /** Pick the mark shown in the sidebar switcher; an empty id restores the letter. */
   setProfileIcon(id: string, icon: string): void {
-    if (id === INCOGNITO_PROFILE_ID) return
-    this.setSnap({
-      profiles: this.snap.profiles.map((p) => {
-        if (p.id !== id) return p
-        const next: WebProfile = { ...p }
-        if (icon) next.icon = icon
-        else delete next.icon
-        return next
-      })
-    })
-    void this.persistProfiles()
+    if (id !== INCOGNITO_PROFILE_ID) void this.patchProfileSettings(id, { icon })
   }
 
-  /**
-   * Show/hide a profile in the sidebar switcher. The profile itself (cookies,
-   * logins, lists) is untouched — hiding the *active* one just moves the session
-   * to the first profile still on show, and the last visible one cannot be hidden.
-   */
   setProfileHidden(id: string, hidden: boolean): void {
-    if (id === INCOGNITO_PROFILE_ID) return
-    if (hidden && !canHideProfile(this.snap.profiles, id)) return
-    const profiles = this.snap.profiles.map((p) => {
-      if (p.id !== id) return p
-      const next: WebProfile = { ...p }
-      if (hidden) next.hidden = true
-      else delete next.hidden
-      return next
-    })
-    const shown = switcherProfiles(profiles)
-    const wasActive = this.snap.activeProfileId === id
-    const activeProfileId = wasActive && hidden ? (shown[0]?.id ?? this.snap.activeProfileId) : this.snap.activeProfileId
-    const switched = activeProfileId !== this.snap.activeProfileId
-    this.setSnap({ profiles, activeProfileId })
-    void this.persistProfiles()
-    if (switched) {
-      void this.api.settings.set('activeProfileId', activeProfileId)
-      void this.refreshActiveLists()
-    }
+    if (id === INCOGNITO_PROFILE_ID || hidden && !canHideProfile(this.snap.profiles, id)) return
+    void this.patchProfileSettings(id, { hidden })
   }
 
   async deleteProfile(id: string): Promise<void> {
+    if (this.profileLoad || this.snap.profileError) throw new Error(this.snap.profileError || uiText('surfing.error.profileChanged'))
     if (!canDeleteProfile(this.snap.profiles, id)) return
     const profiles = reconcileProfiles(this.snap.profiles.filter((p) => p.id !== id))
     const replacementId = switcherProfiles(profiles)[0]?.id ?? profiles.find((p) => !p.private)?.id ?? DEFAULT_PROFILE_ID
     const wasActive = this.snap.activeProfileId === id
     const activeProfileId = wasActive ? replacementId : this.snap.activeProfileId
     const tabs = this.remapTabProfile(this.snap.tabs, id, replacementId)
-    this.setSnap({ profiles, activeProfileId, tabs })
+    this.setSnap({ profiles })
+    await this.persistProfiles()
+    this.setSnap({ activeProfileId, tabs })
     if (wasActive) void this.api.settings.set('activeProfileId', activeProfileId)
-    const persisted = this.persistProfiles()
     this.persistTabs()
     const retiredGuests = this.remountProfileViews(id)
     this.syncAdblock()
     const clearedBrowserData = retiredGuests.then(() => this.clearBrowserData(id))
     // Drop the deleted profile's per-profile lists (history/favorites/reading).
-    const clearedHistory = this.clearHistory(id)
     this.favCache.delete(id)
     this.readingCache.delete(id)
     this.histCache.delete(id)
     this.listLoads.delete(id)
-    await Promise.all([
-      persisted,
-      clearedBrowserData,
-      clearedHistory,
-      this.replaceRows(SAVED_PAGES_DATASET, ['profileId', 'kind', 'url'], [], { profileId: id })
-    ])
+    await clearedBrowserData
     if (wasActive) await this.refreshActiveLists()
   }
 
@@ -639,6 +614,7 @@ export class WebStore {
   }
 
   private async hydrateLists(profileId: string): Promise<void> {
+    await this.profileWrites
     const [fav, reading, hist] = await Promise.all([
       this.readSavedPages(profileId, 'favorite'),
       this.readSavedPages(profileId, 'reading'),
@@ -652,35 +628,26 @@ export class WebStore {
 
   /** Read one saved-page kind in its persisted order. */
   private async readSavedPages(profileId: string, kind: 'favorite' | 'reading'): Promise<SavedPage[]> {
-    try {
-      const recs = await this.rows(SAVED_PAGES_DATASET, { profileId, kind }, [{ field: 'position', direction: 'asc' }])
-      const list = recs.map((r) => normalizeSavedPage(r)).filter((p): p is SavedPage => p != null)
-      return list
-    } catch {
-      return []
-    }
+    if (this.isPrivate(profileId)) return (kind === 'favorite' ? this.favCache : this.readingCache).get(profileId) ?? []
+    const snapshot = await this.api.backend.call<PagesSnapshot>('data.saved.list', { profileId, kind })
+    this.listRevisions.set(`saved:${profileId}:${kind}`, snapshot.revision)
+    return snapshot.pages
   }
 
   private async readVisits(profileId: string): Promise<SavedPage[]> {
-    try {
-      const recs = await this.rows(VISITS_DATASET, { profileId }, [{ field: 'ts', direction: 'desc' }])
-      return recs.map((record) => normalizeSavedPage(record)).filter((page): page is SavedPage => page != null)
-    } catch {
-      return []
-    }
+    if (this.isPrivate(profileId)) return []
+    const snapshot = await this.api.backend.call<PagesSnapshot>('data.history.list', { profileId })
+    this.listRevisions.set(`history:${profileId}`, snapshot.revision)
+    return snapshot.pages
   }
 
-  private persistSavedPages(profileId: string, kind: 'favorite' | 'reading', pages: SavedPage[]): Promise<void> {
-    if (this.isPrivate(profileId)) return Promise.resolve()
-    const records = pages.map((page, position) => ({
-      profileId,
-      kind,
-      url: page.url,
-      title: page.title,
-      ts: page.ts,
-      position
-    })) as DatasetRecord[]
-    return this.replaceRows(SAVED_PAGES_DATASET, ['profileId', 'kind', 'url'], records, { profileId, kind })
+  private async persistSavedPages(profileId: string, kind: 'favorite' | 'reading', pages: SavedPage[]): Promise<void> {
+    if (this.isPrivate(profileId)) return
+    await this.profileWrites
+    const expectedRevision = this.listRevisions.get(`saved:${profileId}:${kind}`)
+    if (expectedRevision === undefined) throw new Error('Reload saved pages before saving')
+    const result = await this.api.backend.call<PagesSnapshot>('data.saved.set', { profileId, kind, pages, expectedRevision })
+    for (const key of this.listRevisions.keys()) if (key.startsWith('saved:')) this.listRevisions.set(key, result.revision)
   }
 
   /** Ensure a profile's lists are loaded before a mutation (public — the page
@@ -736,8 +703,8 @@ export class WebStore {
     const cur = this.favCache.get(profileId) ?? []
     const exists = cur.some((p) => p.url === page.url)
     const next = exists ? cur.filter((p) => p.url !== page.url) : [page, ...cur]
-    this.favCache.set(profileId, next)
     await this.persistSavedPages(profileId, 'favorite', next)
+    this.favCache.set(profileId, next)
     this.syncActiveLists(profileId)
     return !exists
   }
@@ -745,8 +712,8 @@ export class WebStore {
   async removeFavorite(profileId: string, url: string): Promise<void> {
     await this.loadProfileLists(profileId)
     const next = (this.favCache.get(profileId) ?? []).filter((p) => p.url !== url)
-    this.favCache.set(profileId, next)
     await this.persistSavedPages(profileId, 'favorite', next)
+    this.favCache.set(profileId, next)
     this.syncActiveLists(profileId)
   }
 
@@ -757,16 +724,16 @@ export class WebStore {
     await this.loadProfileLists(profileId)
     const cur = this.readingCache.get(profileId) ?? []
     const next = [page, ...cur.filter((p) => p.url !== page.url)]
-    this.readingCache.set(profileId, next)
     await this.persistSavedPages(profileId, 'reading', next)
+    this.readingCache.set(profileId, next)
     this.syncActiveLists(profileId)
   }
 
   async removeFromReadingList(profileId: string, url: string): Promise<void> {
     await this.loadProfileLists(profileId)
     const next = (this.readingCache.get(profileId) ?? []).filter((p) => p.url !== url)
-    this.readingCache.set(profileId, next)
     await this.persistSavedPages(profileId, 'reading', next)
+    this.readingCache.set(profileId, next)
     this.syncActiveLists(profileId)
   }
 
@@ -854,7 +821,7 @@ export class WebStore {
     this.lastHistoryTs.set(profileId, ts)
     const row = { id: `${profileId}:${ts}:${counter++}`, profileId, url, title, ts }
     this.historyWriteQueue = this.historyWriteQueue
-      .then(async () => { await this.api.data.dataset(VISITS_DATASET).insert(row) })
+      .then(async () => { await this.profileWrites; await this.api.backend.call('data.history.append', { profileId, page: { url, title, ts }, id: row.id }); this.listRevisions.delete(`history:${profileId}`) })
       .catch(() => {})
     if (this.histCache.has(profileId)) {
       this.histCache.set(profileId, [{ url, title, ts }, ...(this.histCache.get(profileId) ?? [])])
@@ -869,19 +836,16 @@ export class WebStore {
 
   async clearHistory(profileId: string): Promise<void> {
     await this.historyWriteQueue
+    if (!this.isPrivate(profileId)) {
+      let expectedRevision = this.listRevisions.get(`history:${profileId}`)
+      if (expectedRevision === undefined) { await this.readVisits(profileId); expectedRevision = this.listRevisions.get(`history:${profileId}`) }
+      const result = await this.api.backend.call<PagesSnapshot>('data.history.clear', { profileId, expectedRevision })
+      this.listRevisions.set(`history:${profileId}`, result.revision)
+    }
     this.lastHistoryUrl.delete(profileId)
     this.lastHistoryTs.delete(profileId)
     this.histCache.set(profileId, [])
     this.syncActiveLists(profileId)
-    try {
-      const rows = await this.rows(VISITS_DATASET, { profileId })
-      const dataset = this.api.data.dataset(VISITS_DATASET)
-      for (let index = 0; index < rows.length; index += 500) {
-        await dataset.batch(rows.slice(index, index + 500).map((row) => ({ operation: 'delete', key: { id: typeof row.id === 'string' ? row.id : '' } })))
-      }
-    } catch {
-      /* nothing to clear */
-    }
   }
 
   /** Clear cookies/cache/storage for a profile's isolated partition (main process
@@ -1266,6 +1230,7 @@ export class WebStore {
       this.adblockTimer = null
       this.pushAdblock()
     }
+    this.offData()
     this.offBrowser()
     this.offState()
     if (this.reconcileTimer != null) clearInterval(this.reconcileTimer)
@@ -1274,6 +1239,7 @@ export class WebStore {
     this.hosts.clear()
     this.listeners.clear()
     return this.disposal = (async () => {
+      await this.profileWrites.catch(() => {})
       while (this.guestWork.size) await Promise.allSettled([...this.guestWork])
       if (this.guestFailure) throw this.guestFailure
     })()

@@ -388,6 +388,7 @@ describe('browser guest ownership', () => {
 
   it('closes a deleted profile guest and ignores its retained ready and history events', async () => {
     const { api, store, close, ready, navigate } = fixture()
+    await store.loadConfig()
     const profileId = store.addProfile('Research')
     await store.flushProfiles()
     store.restoreTab(TAB, { url: URL, title: 'Research', profileId })
@@ -412,6 +413,7 @@ describe('browser guest ownership', () => {
   it('waits for a deleted profile mutation and guest closure before clearing browser data', async () => {
     const { api, store, execute, close, ready } = fixture()
     const clearData = vi.spyOn(api.drivers.browser, 'clearData').mockResolvedValue({ ok: true })
+    await store.loadConfig()
     const profileId = store.addProfile('Research')
     await store.flushProfiles()
     store.restoreTab(TAB, { url: URL, title: 'Research', profileId })

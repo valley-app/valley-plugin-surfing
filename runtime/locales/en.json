@@ -319,5 +319,13 @@
   "surfing.profile.deleteDescription": "Remove this profile, its website logins, browsing history, favorites and reading list.",
   "surfing.profile.deleteLast": "Create another profile before deleting this one.",
   "bookmark.view": "Browser view",
-  "bookmark.item": "Selected item"
+  "bookmark.item": "Selected item",
+  "surfing.command.readProfileSettings": "Surfing: Read profile and ad-block settings",
+  "surfing.command.patchProfileSettings": "Surfing: Update profile and ad-block settings",
+  "surfing.error.profileChanged": "The profile changed. Read its current settings before editing.",
+  "surfing.profile.reload": "Reload profiles",
+  "surfing.command.listEmbedProviders": "List embed providers",
+  "surfing.command.createEmbedProvider": "Create an embed provider",
+  "surfing.command.customizeEmbedProvider": "Customize an embed provider",
+  "surfing.embed.providerMissing": "The embed provider no longer exists."
 }

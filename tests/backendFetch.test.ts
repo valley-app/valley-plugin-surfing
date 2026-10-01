@@ -1,3 +1,4 @@
+import { assertCommandOutput } from './commandContracts'
 import { describe, expect, it, vi } from 'vitest'
 import type { PluginBackendApi } from '@valley/plugin-sdk'
 import { fetchUrl } from '../src/backend/fetch'
@@ -12,6 +13,7 @@ describe('backend URL fetch', () => {
     const { api, network } = backend(async () => ({ status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, bodyBase64: btoa('<p>Moss</p>') }))
     const result = await fetchUrl(api, { url: 'http://forest.example/moss#top' }, new AbortController().signal)
     expect(network.fetch).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://forest.example/moss', method: 'GET', timeoutMs: 30_000 }))
+    assertCommandOutput('fetch.url', {}, result)
     expect(result).toEqual({ url: 'https://forest.example/moss', status: 200, contentType: 'text/html; charset=utf-8', bytes: 11, bodyBase64: btoa('<p>Moss</p>') })
   })
 

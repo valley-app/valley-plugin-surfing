@@ -1,8 +1,10 @@
 import { METADATA_PANEL_SEGMENT_V1, provideBookmarkSurface, type PluginInspectionSubject, type PluginProperty, type ValleyPluginApi } from '@valley/plugin-sdk'
+import { z } from 'zod'
 import { api, React } from './runtime'
 import type { WebStore } from './store'
-import { canDeleteProfile, INCOGNITO_PROFILE_ID } from './profiles'
+import { canDeleteProfile, canHideProfile, INCOGNITO_PROFILE_ID, profileSettingsPatchSchema } from './profiles'
 import { EyeglassesIcon } from './icons'
+import { loadEmbedProviders, customizeEmbedProvider, createCustomEmbedProvider, embedProviderPath } from './embedProviders'
 import { uiText } from './localization'
 import type { InteropValueSchema } from '@valley/plugin-sdk'
 import { readSurfingFileBookmark, subscribeSurfingFileBookmarks, updateSurfingFileBookmark, type SurfingFileBookmarkState } from './workspaceDetails'
@@ -49,6 +51,14 @@ function profileFor(store: WebStore, id: string) {
   const profile = store.getSnapshot().profiles.find((item) => item.id === id)
   if (!profile) throw new Error(uiText('surfing.error.profile'))
   return profile
+}
+
+async function profileRevision(store: WebStore, profileId: string): Promise<string> {
+  const before = JSON.stringify(profileFor(store, profileId))
+  const bytes = new TextEncoder().encode(before)
+  const hash = await crypto.subtle.digest('SHA-256', bytes)
+  if (JSON.stringify(profileFor(store, profileId)) !== before) throw new Error(uiText('surfing.error.profileChanged'))
+  return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 function inspectProfile(store: WebStore, subject?: PluginInspectionSubject): PluginProperty[] {
@@ -161,6 +171,21 @@ export function registerSurfingSurfaces(pluginApi: ValleyPluginApi, store: WebSt
   offs.push(pluginApi.interop.extensions.provide(METADATA_PANEL_SEGMENT_V1, { id: 'surfing.profileProperties', label: 'Profile metadata', labelKey: 'surfing.metadata.profile', icon: 'user', pluginSurfaces: ['main_workspace'], inspect: ({ subject }) => inspectProfile(store, subject), render: ({ subject }) => <Properties store={store} subject={subject} kind="profile" /> }))
   const profileInput = { schema: schema({ profileId: string }, ['profileId']), parse: (raw: unknown) => ({ profileId: required(object(raw).profileId, 'profileId') }) }
   offs.push(pluginApi.commands.register({ id: 'list-profiles', label: 'Surfing: List browser profiles', labelKey: 'surfing.command.listProfiles', sideEffect: 'read', paletteSafe: false, run: async () => { await ready; return store.getSnapshot().profiles } }))
+  const patchRequest = z.object({ profileId: z.string().min(1).max(256), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/), patch: profileSettingsPatchSchema }).strict()
+  offs.push(pluginApi.commands.register({ id: 'read-profile-settings', label: 'Surfing: Read profile and ad-block settings', labelKey: 'surfing.command.readProfileSettings', sideEffect: 'read', paletteSafe: false, input: profileInput,
+    run: async ({ profileId }) => { await ready; await store.flushProfiles(); return { profile: profileFor(store, profileId), revision: await profileRevision(store, profileId) } } }))
+  offs.push(pluginApi.commands.register({ id: 'patch-profile-settings', label: 'Surfing: Update profile and ad-block settings', labelKey: 'surfing.command.patchProfileSettings', sideEffect: 'write', paletteSafe: false,
+    input: { schema: schema({ profileId: { type: 'string', minLength: 1, maxLength: 256 }, expectedRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' }, patch: { ...schema({ name: { type: 'string', minLength: 1, maxLength: 500 }, icon: { type: 'string', maxLength: 128 }, hidden: { type: 'boolean' }, adblockEnabled: { type: 'boolean' }, adblockRules: { type: 'string', maxLength: 65536 }, adblockFrequency: { type: 'integer', minimum: 0, maximum: 3650 } }), minProperties: 1 } }, ['profileId', 'expectedRevision', 'patch']), parse: raw => patchRequest.parse(raw) },
+    preview: input => input, revision: ({ profileId }) => profileRevision(store, profileId),
+    run: async ({ profileId, expectedRevision, patch }) => {
+      await ready
+      if (expectedRevision !== await profileRevision(store, profileId)) throw new Error(uiText('surfing.error.profileChanged'))
+      const profile = profileFor(store, profileId)
+      if (profile.private && ['name', 'icon', 'hidden'].some(key => Object.hasOwn(patch, key))) throw new Error(uiText('surfing.error.incognito'))
+      if (patch.hidden === true && !canHideProfile(store.getSnapshot().profiles, profileId)) throw new Error(uiText('surfing.error.lastProfile'))
+      await store.patchProfileSettings(profileId, patch)
+      return { value: { profile: profileFor(store, profileId), revision: await profileRevision(store, profileId) }, revert: null }
+    } }))
   offs.push(pluginApi.commands.register({ id: 'create-profile', label: 'Surfing: Create a browser profile', labelKey: 'surfing.command.createProfile', sideEffect: 'write', paletteSafe: false, input: { schema: schema({ name: string }, ['name']), parse: (raw) => ({ name: required(object(raw).name, 'name') }) }, preview: (input) => input, run: async ({ name }) => { await ready; const id = store.addProfile(name); await store.flushProfiles(); return { value: profileFor(store, id), revert: null } } }))
   offs.push(pluginApi.commands.register({ id: 'delete-profile', label: 'Surfing: Delete a browser profile', labelKey: 'surfing.command.deleteProfile', sideEffect: 'write', paletteSafe: false, input: profileInput, preview: (input) => input, revision: ({ profileId }) => profileFor(store, profileId), run: async ({ profileId }) => {
     profileFor(store, profileId)
@@ -190,5 +215,12 @@ export function registerSurfingSurfaces(pluginApi: ValleyPluginApi, store: WebSt
     if (value.cursor !== undefined && typeof value.cursor !== 'string') throw new Error(uiText('surfing.error.invalid', { value: 'cursor' }))
     return { profileId: required(value.profileId, 'profileId'), cursor: value.cursor as string | undefined, limit: Number(limit) }
   } }, run: async ({ profileId, cursor, limit }) => { await ready; profileFor(store, profileId); return pluginApi.data.dataset('surfing.saved_pages').query({ where: { profileId }, cursor, limit }) } }))
+  offs.push(pluginApi.commands.register({ id: 'list-embed-providers', label: 'Surfing: List embed providers', labelKey: 'surfing.command.listEmbedProviders', sideEffect: 'read', paletteSafe: false,
+    run: () => loadEmbedProviders(false) }))
+  offs.push(pluginApi.commands.register({ id: 'create-embed-provider', label: 'Surfing: Create an embed provider', labelKey: 'surfing.command.createEmbedProvider', sideEffect: 'write', paletteSafe: false,
+    run: async () => { const provider = await createCustomEmbedProvider(); return { value: { provider, path: embedProviderPath(provider) }, revert: null } } }))
+  offs.push(pluginApi.commands.register({ id: 'customize-embed-provider', label: 'Surfing: Customize an embed provider', labelKey: 'surfing.command.customizeEmbedProvider', sideEffect: 'write', paletteSafe: false,
+    input: { schema: schema({ id: { type: 'string', minLength: 1, maxLength: 128 } }, ['id']), parse: raw => ({ id: required(object(raw).id, 'id') }) },
+    preview: input => input, run: async ({ id }) => { const configuration = await loadEmbedProviders(false); const provider = configuration.providers.find(value => value.id === id); if (!provider) throw new Error(uiText('surfing.embed.providerMissing')); await customizeEmbedProvider(provider); return { value: { provider, path: embedProviderPath(provider) }, revert: null } } }))
   return () => offs.forEach((off) => off())
 }

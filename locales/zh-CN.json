@@ -319,5 +319,13 @@
   "surfing.profile.deleteDescription": "删除此配置文件及其网站登录信息、浏览历史、收藏夹和阅读列表。",
   "surfing.profile.deleteLast": "请先创建另一个配置文件，再删除此配置文件。",
   "bookmark.view": "浏览器视图",
-  "bookmark.item": "所选项目"
+  "bookmark.item": "所选项目",
+  "surfing.command.readProfileSettings": "Surfing：读取配置文件和广告拦截设置",
+  "surfing.command.patchProfileSettings": "Surfing：更新配置文件和广告拦截设置",
+  "surfing.error.profileChanged": "配置文件已更改。请先读取当前设置再编辑。",
+  "surfing.profile.reload": "重新加载配置文件",
+  "surfing.command.listEmbedProviders": "列出嵌入提供程序",
+  "surfing.command.createEmbedProvider": "创建嵌入提供程序",
+  "surfing.command.customizeEmbedProvider": "自定义嵌入提供程序",
+  "surfing.embed.providerMissing": "嵌入提供程序已不存在。"
 }

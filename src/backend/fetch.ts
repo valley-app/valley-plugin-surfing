@@ -23,7 +23,7 @@ function byteLength(base64: string): number {
 }
 
 export async function fetchUrl(
-  api: PluginBackendApi,
+  api: Pick<PluginBackendApi, 'network'>,
   raw: unknown,
   cancellation: PluginBackendOperationContext['cancellation']
 ): Promise<WebFetchResponse | { error: WebFetchFailure; message?: string }> {
@@ -47,5 +47,5 @@ export async function fetchUrl(
 }
 
 export function registerFetch(api: PluginBackendApi): () => void {
-  return api.rpc.handleOperation('fetch.url', (payload, context) => fetchUrl(api, payload, context.cancellation))
+  return api.rpc.handleOperation('fetch.url', (payload, context) => fetchUrl(context.api, payload, context.cancellation))
 }

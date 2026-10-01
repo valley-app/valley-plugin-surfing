@@ -319,5 +319,13 @@
   "surfing.profile.deleteDescription": "Supprime ce profil, ses connexions aux sites, son historique de navigation, ses favoris et sa liste de lecture.",
   "surfing.profile.deleteLast": "Créez un autre profil avant de supprimer celui-ci.",
   "bookmark.view": "Vue du navigateur",
-  "bookmark.item": "Élément sélectionné"
+  "bookmark.item": "Élément sélectionné",
+  "surfing.command.readProfileSettings": "Surfing : lire les paramètres du profil et du bloqueur",
+  "surfing.command.patchProfileSettings": "Surfing : modifier les paramètres du profil et du bloqueur",
+  "surfing.error.profileChanged": "Le profil a changé. Consultez les paramètres actuels avant de les modifier.",
+  "surfing.profile.reload": "Recharger les profils",
+  "surfing.command.listEmbedProviders": "Lister les fournisseurs intégrés",
+  "surfing.command.createEmbedProvider": "Créer un fournisseur intégré",
+  "surfing.command.customizeEmbedProvider": "Personnaliser un fournisseur intégré",
+  "surfing.embed.providerMissing": "Le fournisseur intégré n’existe plus."
 }

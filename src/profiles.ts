@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { parseDatePattern, type DateToken } from '@valley/plugin-sdk/datePattern'
 
 /**
@@ -19,6 +20,11 @@ export interface WebProfile {
   adblockRules: string
   adblockFrequency: number
 }
+
+export const profileSettingsPatchSchema = z.object({
+  name: z.string().trim().min(1).max(500).optional(), icon: z.string().max(128).optional(), hidden: z.boolean().optional(),
+  adblockEnabled: z.boolean().optional(), adblockRules: z.string().max(65536).optional(), adblockFrequency: z.number().int().min(0).max(3650).optional()
+}).strict().refine(value => Object.keys(value).length > 0)
 
 export interface HistoryEntry {
   url: string

@@ -28,6 +28,7 @@
     "@valley/plugin-sdk": "file:vendor/valley-plugin-sdk-6.0.0.tgz",
     "@valley/plugin-testkit": "file:vendor/valley-plugin-testkit-6.0.0.tgz",
     "@valley/plugin-tools": "file:vendor/valley-plugin-tools-5.0.0.tgz",
+    "ajv": "8.20.0",
     "jsdom": "24.1.3",
     "react": "18.3.1",
     "react-dom": "18.3.1",

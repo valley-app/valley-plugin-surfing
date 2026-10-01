@@ -565,7 +565,8 @@ const EmbedsSection: FC = () => {
 
 /** `surfing.settings` — rendered once per manifest `settingsSections` id. */
 export const Settings: FC<{ section?: string }> = ({ section }) => {
-  if (section === 'profiles') return <ProfilesSection />
+  const { snap } = useWeb()
+  if (section === 'profiles') return <>{snap.profileError && <div role="alert">{snap.profileError} <Button variant="secondary" onClick={() => { void getStore()?.loadConfig() }}>{uiText('surfing.profile.reload')}</Button></div>}<ProfilesSection /></>
   if (section === 'embeds') return <EmbedsSection />
   return <WebSection />
 }

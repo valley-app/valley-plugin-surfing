@@ -7,7 +7,7 @@ import { registerWebFences } from '../src/embeds'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { METADATA_PANEL_SEGMENT_V1, PLUGIN_SURFACE_V1, WORKSPACE_BOOKMARK_V1, type BookmarkCaptureResult } from '@valley/plugin-sdk'
 import { readSurfingFileBookmark, updateSurfingFileBookmark } from '../src/workspaceDetails'
-import { createMockValleyApi } from '@valley/plugin-testkit'
+import { createMockValleyApi } from './mock'
 import * as plugin from '../src/index'
 import manifest from '../manifest.json'
 import config from '../config.json'
@@ -25,7 +25,6 @@ describe('package host contracts', () => {
     const mock = createMockValleyApi({ manifest: declared, indexEntries: [{ relPath: 'Unrelated.md', title: 'Unrelated', kind: 'note', mtimeMs: 1 }] })
     const observe = vi.spyOn(mock.api.index, 'observe')
     expect(mock.api.getState().indexEntries).toEqual([])
-    mock.api.backend.call = vi.fn(async () => ({ ok: true })) as typeof mock.api.backend.call
     const dispose = plugin.register(mock.api)
     try {
       await Promise.resolve()

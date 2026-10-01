@@ -319,5 +319,13 @@
   "surfing.profile.deleteDescription": "Entfernt dieses Profil, seine Website-Anmeldungen, den Browserverlauf, die Favoriten und die Leseliste.",
   "surfing.profile.deleteLast": "Erstelle ein weiteres Profil, bevor du dieses löschst.",
   "bookmark.view": "Browseransicht",
-  "bookmark.item": "Ausgewählter Eintrag"
+  "bookmark.item": "Ausgewählter Eintrag",
+  "surfing.command.readProfileSettings": "Surfing: Profil- und Werbeblocker-Einstellungen lesen",
+  "surfing.command.patchProfileSettings": "Surfing: Profil- und Werbeblocker-Einstellungen ändern",
+  "surfing.error.profileChanged": "Das Profil wurde geändert. Lies vor dem Bearbeiten die aktuellen Einstellungen.",
+  "surfing.profile.reload": "Profile neu laden",
+  "surfing.command.listEmbedProviders": "Einbettungsanbieter auflisten",
+  "surfing.command.createEmbedProvider": "Einbettungsanbieter erstellen",
+  "surfing.command.customizeEmbedProvider": "Einbettungsanbieter anpassen",
+  "surfing.embed.providerMissing": "Der Einbettungsanbieter existiert nicht mehr."
 }

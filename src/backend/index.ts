@@ -4,6 +4,8 @@ import type { PluginBackendApi } from '@valley/plugin-sdk'
 import { DEFAULT_ADBLOCK_RULES, normalizeProfileAdblock, partitionFor } from '../profiles'
 import { registerArchiveReader } from './archives'
 import { registerFetch } from './fetch'
+import { registerDataOwner } from './data'
+import { registerProviderOwner } from './providers'
 
 const profileSchema = z.object({ partition: z.string().max(256), enabled: z.boolean(), rules: z.string().max(64 * 1024), frequencyDays: z.number().int().min(0).max(3650) }).strict()
 const requestSchema = z.object({ partition: z.string().max(256), phase: z.enum(['request', 'response']).optional(), url: z.string().url().max(8192), type: z.string().max(64), method: z.string().max(64), sourceUrl: z.string().max(8192) }).strict()
@@ -135,5 +137,7 @@ export function register(api: PluginBackendApi): () => void {
   const offFilters = createFilters(api).register()
   const offArchives = registerArchiveReader(api)
   const offFetch = registerFetch(api)
-  return () => { offFetch(); offArchives(); offFilters() }
+  const offData = registerDataOwner(api)
+  const offProviders = registerProviderOwner(api)
+  return () => { offProviders(); offData(); offFetch(); offArchives(); offFilters() }
 }

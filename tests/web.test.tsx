@@ -6,7 +6,7 @@ import { register } from '../src/index'
 import { registerWebCommands } from '../src/commands'
 import { createWebFetcher } from '../src/webFetch'
 import { initRuntime } from '../src/runtime'
-import { createStore, disposeStore, getStore, toUrl } from '../src/store'
+import { createStore, disposeStore, getStore, toUrl, WebStore } from '../src/store'
 import { clearWebContext, publishWebContext, requestWebNoteFromSelection } from '../src/webContext'
 import { embedPresentation, registerWebFences, resolveProviderUrl } from '../src/embeds'
 import { ensureEmbedProviders, loadEmbedProviders, customizeEmbedProvider, createCustomEmbedProvider, type EmbedProvider } from '../src/embedProviders'
@@ -117,7 +117,7 @@ describe('web plugin', () => {
     const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
     initRuntime(mock.api)
     const custom = { ...youtubeProvider, id: 'field', directory: 'field', language: 'field', kind: 'generic' as const, valueParser: 'identity' as const, template: 'https://example.com/embed/{value}' }
-    const dispose = registerWebFences(Promise.resolve({ providers: [youtubeProvider, xProvider, custom], customized: [], issues: [] }))
+    const dispose = registerWebFences(Promise.resolve({ providers: [youtubeProvider, xProvider, custom], customized: [], issues: [], revisions: {}, catalogRevision: 0 }))
     try {
       await tick()
       for (const [code, meta, expected, height] of [
@@ -160,7 +160,7 @@ describe('web plugin', () => {
     vi.stubGlobal('IntersectionObserver', ImmediateIntersectionObserver)
     const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
     initRuntime(mock.api)
-    const offFences = registerWebFences(Promise.resolve({ providers: [youtubeProvider], customized: [], issues: [] }))
+    const offFences = registerWebFences(Promise.resolve({ providers: [youtubeProvider], customized: [], issues: [], revisions: {}, catalogRevision: 0 }))
     let offEmbed: void | (() => void) = undefined
     try {
       await tick()
@@ -494,7 +494,7 @@ describe('web plugin', () => {
       height: 500,
       autoSize: false
     })
-    const dispose = registerWebFences(Promise.resolve({ providers: [xProvider], customized: [], issues: [] }))
+    const dispose = registerWebFences(Promise.resolve({ providers: [xProvider], customized: [], issues: [], revisions: {}, catalogRevision: 0 }))
     await tick()
     expect(mock.codeBlockRenderers.has('twitter')).toBe(false)
     expect([...mock.codeBlockRenderers.keys()]).toEqual(['surfing'])
@@ -575,6 +575,7 @@ describe('web plugin', () => {
     let resolve!: (entries: Awaited<ReturnType<typeof mock.api.data.files.list>>) => void
     const list = vi.spyOn(mock.api.data.files, 'list').mockImplementationOnce(() => new Promise(done => { resolve = done }))
     const dispose = registerWebFences()
+    await waitFor(() => expect(resolve).toBeTypeOf('function'))
     for (let index = 0; index < 20; index++) filesChanged('embeds/youtube/provider.json')
     resolve([])
     await waitFor(() => expect(registerFence).toHaveBeenCalledTimes(2))
@@ -582,6 +583,7 @@ describe('web plugin', () => {
     let release!: (entries: Awaited<ReturnType<typeof mock.api.data.files.list>>) => void
     list.mockImplementationOnce(() => new Promise(done => { release = done }))
     filesChanged('embeds/x/provider.json')
+    await waitFor(() => expect(release).toBeTypeOf('function'))
     dispose()
     release([])
     await tick()
@@ -623,6 +625,81 @@ describe('web plugin', () => {
     expect(res.ok).toBe(true)
     expect(Object.keys(getStore()!.getSnapshot().tabs)).toHaveLength(1)
     dispose()
+  })
+
+  it('edits every profile setting through its typed owner command and rejects stale revisions', async () => {
+    const { api } = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(api)
+    try {
+      const read = await api.commands.executeOwn('read-profile-settings', { profileId: 'default' })
+      expect(read.ok).toBe(true)
+      if (!read.ok) throw new Error(read.error.message)
+      const revision = (read.value as { revision: string }).revision
+      const patch = { name: 'Canopy', icon: 'leaf', hidden: false, adblockEnabled: false, adblockRules: 'https://example.test/rules.txt', adblockFrequency: 14 }
+      const updated = await api.commands.executeOwn('patch-profile-settings', { profileId: 'default', expectedRevision: revision, patch })
+      const { hidden: _hidden, ...storedPatch } = patch
+      expect(updated, JSON.stringify(updated)).toMatchObject({ ok: true, value: { profile: storedPatch } })
+      expect(getStore()!.getSnapshot().profiles.find(profile => profile.id === 'default')).toMatchObject(storedPatch)
+      expect(getStore()!.getSnapshot().profiles.find(profile => profile.id === 'default')!.hidden).not.toBe(true)
+      expect(await api.commands.executeOwn('patch-profile-settings', { profileId: 'default', expectedRevision: revision, patch: { name: 'Stale' } })).toMatchObject({ ok: false, error: { message: expect.stringContaining('profile changed') } })
+      expect(getStore()!.getSnapshot().profiles.find(profile => profile.id === 'default')!.name).toBe('Canopy')
+      expect(await api.commands.executeOwn('patch-profile-settings', { profileId: 'default', expectedRevision: revision, patch: { adblockFrequency: -1 } })).toMatchObject({ ok: false })
+    } finally { dispose() }
+  })
+
+  it('commits profile and ad-block settings atomically across independent owners without retrying stale edits', async () => {
+    const mock = createMockValleyApi()
+    initRuntime(mock.api)
+    const first = new WebStore(mock.api)
+    const second = new WebStore(mock.api)
+    try {
+      await first.loadConfig()
+      await second.loadConfig()
+      const results = await Promise.allSettled([
+        first.patchProfileSettings('default', { name: 'Forest', adblockEnabled: false }),
+        second.patchProfileSettings('default', { name: 'Lake', adblockEnabled: true })
+      ])
+      expect(results.map(result => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+      expect(await mock.api.data.dataset('profiles').get({ id: 'default' })).toMatchObject({ name: 'Forest' })
+      expect(await mock.api.data.dataset('profile_adblock').get({ profileId: 'default' })).toMatchObject({ adblockEnabled: false })
+      expect(second.getSnapshot().profileError).toContain('profile changed')
+      expect(() => second.renameProfile('default', 'Stale again')).toThrow('profile changed')
+      expect(await mock.api.data.dataset('profiles').get({ id: 'default' })).toMatchObject({ name: 'Forest' })
+      await second.loadConfig()
+      await second.patchProfileSettings('default', { name: 'Reviewed' })
+      expect(await mock.api.data.dataset('profiles').get({ id: 'default' })).toMatchObject({ name: 'Reviewed' })
+    } finally { await first.dispose(); await second.dispose() }
+  })
+
+  it('exposes embed provider discovery and guarded create/customize actions through commands', async () => {
+    const mock = createMockValleyApi()
+    const off = register(mock.api)
+    try {
+      const listed = await mock.api.commands.executeOwn('list-embed-providers')
+      expect(listed).toMatchObject({ ok: true, value: { providers: expect.arrayContaining([expect.objectContaining({ id: 'youtube' })]) } })
+      const customized = await mock.api.commands.executeOwn('customize-embed-provider', { id: 'youtube' })
+      expect(customized).toMatchObject({ ok: true, value: { provider: { id: 'youtube' } } })
+      const created = await mock.api.commands.executeOwn('create-embed-provider')
+      expect(created).toMatchObject({ ok: true, value: { provider: { id: 'custom' } } })
+      expect(await mock.api.commands.executeOwn('customize-embed-provider', { id: 'missing' })).toMatchObject({ ok: false })
+    } finally { off() }
+  })
+
+  it('never replaces a provider created by another owner between discovery and file creation', async () => {
+    const mock = createMockValleyApi()
+    initRuntime(mock.api)
+    const original = mock.api.data.files.writeTextGuarded.bind(mock.api.data.files)
+    const write = vi.spyOn(mock.api.data.files, 'writeTextGuarded')
+    let raced = false
+    write.mockImplementation(async (path, content, baseline) => {
+      if (!raced && path.endsWith('/provider.json')) {
+        raced = true
+        await original(path, 'Externally created provider', null)
+      }
+      return original(path, content, baseline)
+    })
+    await expect(createCustomEmbedProvider()).rejects.toThrow('changed')
+    expect(await mock.api.data.files.readText('embeds/custom/provider.json')).toBe('Externally created provider')
   })
 
   it('enforces the normal-profile invariant through the plugin command API', async () => {
@@ -878,6 +955,7 @@ describe('web store (profiles + active)', () => {
   it('adds, renames, switches active, and deletes profiles', async () => {
     const { api, driverCalls } = createMockValleyApi()
     const store = createStore(api)
+    await store.loadConfig()
     const id = store.addProfile('Fungi')
     expect(store.getSnapshot().profiles.map((p) => p.name)).toContain('Fungi')
     expect(store.getSnapshot().profiles.some((p) => p.id === 'default')).toBe(true)
@@ -912,6 +990,7 @@ describe('web store (profiles + active)', () => {
   it('keeps Default beside custom profiles and allows deleting either while another remains', async () => {
     const { api } = createMockValleyApi()
     const store = createStore(api)
+    await store.loadConfig()
     const fungi = store.addProfile('Fungi')
     const plants = store.addProfile('Plants')
 
@@ -929,6 +1008,7 @@ describe('web store (profiles + active)', () => {
   it('moves open tabs to the replacement normal profile', async () => {
     const { api } = createMockValleyApi()
     const store = createStore(api)
+    await store.loadConfig()
     const fungi = store.addProfile('Fungi')
     const tab = store.openTab('example.com', fungi)
     expect(store.getTab(tab)?.profileId).toBe(fungi)
@@ -958,6 +1038,7 @@ describe('web store (per-profile history)', () => {
   it('keeps history isolated per profile', async () => {
     const { api } = createMockValleyApi()
     const store = createStore(api)
+    await store.loadConfig()
     const fungi = store.addProfile('Fungi')
     store.setActiveProfile(fungi)
     const t = store.openTab('')
@@ -1049,6 +1130,7 @@ describe('web store (favorites)', () => {
   it('keeps favorites isolated per profile', async () => {
     const { api } = createMockValleyApi()
     const store = createStore(api)
+    await store.loadConfig()
     const fungi = store.addProfile('Fungi')
     await store.toggleFavorite('default', { url: 'https://a.example', title: 'A', ts: 1 })
     await store.toggleFavorite(fungi, { url: 'https://b.example', title: 'B', ts: 2 })
@@ -1168,6 +1250,8 @@ describe('web store (ad-block sync)', () => {
     try {
       const { api, driverCalls } = createMockValleyApi()
       const store = createStore(api)
+      await store.loadConfig()
+      vi.mocked(api.backend.call).mockClear()
       driverCalls.length = 0
 
       store.setProfileAdblockSetting('default', 'adblockRules', 'https://one.example/list.txt')
@@ -1175,6 +1259,7 @@ describe('web store (ad-block sync)', () => {
       store.setProfileAdblockSetting('default', 'adblockFrequency', 3)
       expect(adblockCalls(api)).toEqual([])
 
+      await store.flushProfiles()
       vi.advanceTimersByTime(500)
       const pushed = adblockCalls(api)
       expect(pushed).toHaveLength(1)
@@ -1189,17 +1274,20 @@ describe('web store (ad-block sync)', () => {
     }
   })
 
-  it('flushes a pending push when the plugin session is torn down', () => {
+  it('flushes a pending push when the plugin session is torn down', async () => {
     vi.useFakeTimers()
     try {
       const { api, driverCalls } = createMockValleyApi()
       const store = createStore(api)
+      await store.loadConfig()
+      vi.mocked(api.backend.call).mockClear()
       driverCalls.length = 0
 
       store.setProfileAdblockSetting('default', 'adblockEnabled', false)
       expect(adblockCalls(api)).toEqual([])
 
-      store.dispose()
+      await store.flushProfiles()
+      await store.dispose()
       expect(adblockCalls(api)).toHaveLength(1)
       expect(adblockCalls(api)[0]).toMatchObject({ profiles: expect.arrayContaining([expect.objectContaining({
         partition: 'persist:web-default',

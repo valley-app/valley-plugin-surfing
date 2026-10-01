@@ -31,7 +31,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
   let active = true
   store.startOverlay()
   const ready = store.loadConfig()
-  const providersReady = ready.then(() => active ? ensureEmbedProviders() : { providers: [], customized: [], issues: [] })
+  const providersReady = ready.then(() => active ? ensureEmbedProviders() : { providers: [], customized: [], issues: [], revisions: {}, catalogRevision: 0 })
   const offDetails = registerSurfingDetails(api, store)
   const offSurfaces = registerSurfingSurfaces(api, store, ready)
   const fetcher = createWebFetcher(api, store)

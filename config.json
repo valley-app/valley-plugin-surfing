@@ -370,7 +370,7 @@
         "label": "Allow browsing",
         "labelKey": "auto.135f8a7fe1ef",
         "version": 2,
-        "description": "Let the assistant browse autonomously — navigate, click, type, open tabs and fetch URLs without confirming each step.",
+        "description": "Let the assistant browse autonomously \u2014 navigate, click, type, open tabs and fetch URLs without confirming each step.",
         "descriptionKey": "surfing.guard.allow-browsing",
         "entries": {
           "tools": {
@@ -487,7 +487,2449 @@
   },
   "runtime": {
     "ui": "runtime/index.js",
-    "backend": "runtime/backend.js"
+    "backend": "runtime/backend.js",
+    "services": [
+      {
+        "id": "command.fetch",
+        "version": "1.0.0",
+        "method": "fetch.url",
+        "operation": true,
+        "request": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "additionalProperties": false
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "fetch.url",
+            "description": "Fetch an HTTP(S) URL without browser cookies; returns bounded encoded content or an explicit fetch error",
+            "effect": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            },
+            "outputSchema": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer",
+                      "minimum": 100,
+                      "maximum": 599
+                    },
+                    "contentType": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "bodyBase64": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "status",
+                    "contentType",
+                    "bytes",
+                    "bodyBase64"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "enum": [
+                        "url",
+                        "blocked",
+                        "timeout",
+                        "tooLarge",
+                        "redirect",
+                        "network"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": "command.profiles.list",
+        "version": "1.0.0",
+        "method": "command.profiles.list",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "profiles.list",
+            "description": "List browser profiles and their ad-block settings with observed revisions. Incognito data stays in memory.",
+            "effect": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "profiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "createdAt": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "private": {
+                        "type": "boolean"
+                      },
+                      "icon": {
+                        "type": "string",
+                        "maxLength": 128
+                      },
+                      "hidden": {
+                        "type": "boolean"
+                      },
+                      "adblockEnabled": {
+                        "type": "boolean"
+                      },
+                      "adblockRules": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "adblockFrequency": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3650
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "createdAt",
+                      "adblockEnabled",
+                      "adblockRules",
+                      "adblockFrequency"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                },
+                "browserCleanupDeferred": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "profiles",
+                "revisions",
+                "browserCleanupDeferred"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.profiles.set",
+        "version": "1.0.0",
+        "method": "command.profiles.set",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "profiles.set",
+            "description": "Replace the reviewed profile and ad-block configuration atomically. Preserve Incognito and one visible normal profile; deleting profiles removes saved pages and history. Browser partition cleanup is reported as deferred.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "profiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "createdAt": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "private": {
+                        "type": "boolean"
+                      },
+                      "icon": {
+                        "type": "string",
+                        "maxLength": 128
+                      },
+                      "hidden": {
+                        "type": "boolean"
+                      },
+                      "adblockEnabled": {
+                        "type": "boolean"
+                      },
+                      "adblockRules": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "adblockFrequency": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3650
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "createdAt",
+                      "adblockEnabled",
+                      "adblockRules",
+                      "adblockFrequency"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 2,
+                  "maxItems": 1000
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "profiles",
+                "expected"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "profiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "createdAt": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "private": {
+                        "type": "boolean"
+                      },
+                      "icon": {
+                        "type": "string",
+                        "maxLength": 128
+                      },
+                      "hidden": {
+                        "type": "boolean"
+                      },
+                      "adblockEnabled": {
+                        "type": "boolean"
+                      },
+                      "adblockRules": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "adblockFrequency": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3650
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "createdAt",
+                      "adblockEnabled",
+                      "adblockRules",
+                      "adblockFrequency"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                },
+                "browserCleanupDeferred": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "profiles",
+                "revisions",
+                "browserCleanupDeferred"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.profiles.create",
+        "version": "1.0.0",
+        "method": "command.profiles.create",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "profiles.create",
+            "description": "Create an isolated normal browser profile using the observed profile and ad-block revisions.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "name",
+                "expected"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "profiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "createdAt": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "private": {
+                        "type": "boolean"
+                      },
+                      "icon": {
+                        "type": "string",
+                        "maxLength": 128
+                      },
+                      "hidden": {
+                        "type": "boolean"
+                      },
+                      "adblockEnabled": {
+                        "type": "boolean"
+                      },
+                      "adblockRules": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "adblockFrequency": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3650
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "createdAt",
+                      "adblockEnabled",
+                      "adblockRules",
+                      "adblockFrequency"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                },
+                "browserCleanupDeferred": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "profiles",
+                "revisions",
+                "browserCleanupDeferred"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.profiles.patch",
+        "version": "1.0.0",
+        "method": "command.profiles.patch",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "profiles.patch",
+            "description": "Change one profile name, icon, visibility or ad-block configuration using both observed revisions.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "patch": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "icon": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "hidden": {
+                      "type": "boolean"
+                    },
+                    "adblockEnabled": {
+                      "type": "boolean"
+                    },
+                    "adblockRules": {
+                      "type": "string",
+                      "maxLength": 65536
+                    },
+                    "adblockFrequency": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 3650
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "patch",
+                "expected"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "profiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "createdAt": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "private": {
+                        "type": "boolean"
+                      },
+                      "icon": {
+                        "type": "string",
+                        "maxLength": 128
+                      },
+                      "hidden": {
+                        "type": "boolean"
+                      },
+                      "adblockEnabled": {
+                        "type": "boolean"
+                      },
+                      "adblockRules": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "adblockFrequency": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3650
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "createdAt",
+                      "adblockEnabled",
+                      "adblockRules",
+                      "adblockFrequency"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                },
+                "browserCleanupDeferred": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "profiles",
+                "revisions",
+                "browserCleanupDeferred"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.profiles.delete",
+        "version": "1.0.0",
+        "method": "command.profiles.delete",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "profiles.delete",
+            "description": "Delete one normal profile and its saved pages/history using observed revisions. Browser partition cleanup is reported as deferred.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "expected"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "profiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "createdAt": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "private": {
+                        "type": "boolean"
+                      },
+                      "icon": {
+                        "type": "string",
+                        "maxLength": 128
+                      },
+                      "hidden": {
+                        "type": "boolean"
+                      },
+                      "adblockEnabled": {
+                        "type": "boolean"
+                      },
+                      "adblockRules": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "adblockFrequency": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3650
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "createdAt",
+                      "adblockEnabled",
+                      "adblockRules",
+                      "adblockFrequency"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "adblock": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "adblock"
+                  ],
+                  "additionalProperties": false
+                },
+                "browserCleanupDeferred": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              "required": [
+                "profiles",
+                "revisions",
+                "browserCleanupDeferred"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.saved.list",
+        "version": "1.0.0",
+        "method": "command.saved.list",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "saved.list",
+            "description": "Read a profile favorite or reading list in its saved order with its revision.",
+            "effect": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "profileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "favorite",
+                    "reading"
+                  ]
+                }
+              },
+              "required": [
+                "profileId",
+                "kind"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "pages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      },
+                      "title": {
+                        "type": "string",
+                        "maxLength": 8192
+                      },
+                      "ts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "url",
+                      "title",
+                      "ts"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "pages",
+                "revision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.saved.set",
+        "version": "1.0.0",
+        "method": "command.saved.set",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "saved.set",
+            "description": "Replace a reviewed favorite or reading list atomically using its observed revision. Private profile lists stay in the UI session.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "profileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "favorite",
+                    "reading"
+                  ]
+                },
+                "pages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      },
+                      "title": {
+                        "type": "string",
+                        "maxLength": 8192
+                      },
+                      "ts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "url",
+                      "title",
+                      "ts"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "maxItems": 10000
+                },
+                "expectedRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "profileId",
+                "kind",
+                "pages",
+                "expectedRevision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "pages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      },
+                      "title": {
+                        "type": "string",
+                        "maxLength": 8192
+                      },
+                      "ts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "url",
+                      "title",
+                      "ts"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "pages",
+                "revision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.history.list",
+        "version": "1.0.0",
+        "method": "command.history.list",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "history.list",
+            "description": "Read browser history newest first with its observed revision. Private profile history is always empty.",
+            "effect": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "profileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "profileId"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "pages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      },
+                      "title": {
+                        "type": "string",
+                        "maxLength": 8192
+                      },
+                      "ts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "url",
+                      "title",
+                      "ts"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "pages",
+                "revision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.history.clear",
+        "version": "1.0.0",
+        "method": "command.history.clear",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "history.clear",
+            "description": "Clear a profile browsing history using the observed revision; concurrent visits cause a conflict.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "profileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "expectedRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "profileId",
+                "expectedRevision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "pages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      },
+                      "title": {
+                        "type": "string",
+                        "maxLength": 8192
+                      },
+                      "ts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "url",
+                      "title",
+                      "ts"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "pages",
+                "revision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.history.append",
+        "version": "1.0.0",
+        "method": "command.history.append",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "history.append",
+            "description": "Record one HTTP(S) visit with a unique record ID. Incognito visits are never persisted.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "profileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "page": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192
+                    },
+                    "title": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "ts": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "title",
+                    "ts"
+                  ],
+                  "additionalProperties": false
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "profileId",
+                "page",
+                "id"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "recorded": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "recorded"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.providers.list",
+        "version": "1.0.0",
+        "method": "command.providers.list",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "providers.list",
+            "description": "List built-in and customized embed-provider definitions with document and catalog revisions. Renderer code is never executed by this backend operation.",
+            "effect": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "schemaVersion": {
+                        "type": "number",
+                        "const": 1
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                      },
+                      "displayName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "language": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                      },
+                      "template": {
+                        "type": "string",
+                        "maxLength": 8192
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "youtube",
+                          "x",
+                          "generic"
+                        ]
+                      },
+                      "valueParser": {
+                        "type": "string",
+                        "enum": [
+                          "youtube-video-id",
+                          "x-post-id",
+                          "identity"
+                        ]
+                      },
+                      "presentation": {
+                        "type": "object",
+                        "properties": {
+                          "initialHeight": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 2000
+                          },
+                          "autoSize": {
+                            "type": "boolean"
+                          },
+                          "fullWidth": {
+                            "type": "boolean"
+                          },
+                          "minHeight": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 2000
+                          },
+                          "maxHeight": {
+                            "type": "number",
+                            "minimum": 1,
+                            "maximum": 2000
+                          },
+                          "aspectRatio": {
+                            "type": "string",
+                            "maxLength": 128
+                          },
+                          "httpReferrer": {
+                            "type": "string",
+                            "maxLength": 8192
+                          },
+                          "fitWidth": {
+                            "type": "object",
+                            "properties": {
+                              "naturalWidth": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 2000
+                              },
+                              "maxScale": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 4
+                              }
+                            },
+                            "required": [
+                              "naturalWidth",
+                              "maxScale"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "initialHeight",
+                          "autoSize",
+                          "fullWidth"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "theme": {
+                        "type": "object",
+                        "properties": {
+                          "queryParameter": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                          },
+                          "values": {
+                            "type": "object",
+                            "properties": {
+                              "light": {
+                                "type": "string"
+                              },
+                              "dark": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "light",
+                              "dark"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "queryParameter",
+                          "values"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "order": {
+                        "type": "number"
+                      },
+                      "directory": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                      }
+                    },
+                    "required": [
+                      "schemaVersion",
+                      "id",
+                      "displayName",
+                      "language",
+                      "template",
+                      "kind",
+                      "valueParser",
+                      "presentation",
+                      "order",
+                      "directory"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "customized": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "message"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "revisions": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "renderer": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "renderer"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "catalogRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "providers",
+                "customized",
+                "issues",
+                "revisions",
+                "catalogRevision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.providers.create",
+        "version": "1.0.0",
+        "method": "command.providers.create",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "providers.create",
+            "description": "Create a custom embed-provider definition and its default renderer atomically; concurrent creation conflicts instead of overwriting.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "language": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    },
+                    "template": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "youtube",
+                        "x",
+                        "generic"
+                      ]
+                    },
+                    "valueParser": {
+                      "type": "string",
+                      "enum": [
+                        "youtube-video-id",
+                        "x-post-id",
+                        "identity"
+                      ]
+                    },
+                    "presentation": {
+                      "type": "object",
+                      "properties": {
+                        "initialHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "autoSize": {
+                          "type": "boolean"
+                        },
+                        "fullWidth": {
+                          "type": "boolean"
+                        },
+                        "minHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "maxHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "aspectRatio": {
+                          "type": "string",
+                          "maxLength": 128
+                        },
+                        "httpReferrer": {
+                          "type": "string",
+                          "maxLength": 8192
+                        },
+                        "fitWidth": {
+                          "type": "object",
+                          "properties": {
+                            "naturalWidth": {
+                              "type": "number",
+                              "minimum": 1,
+                              "maximum": 2000
+                            },
+                            "maxScale": {
+                              "type": "number",
+                              "minimum": 1,
+                              "maximum": 4
+                            }
+                          },
+                          "required": [
+                            "naturalWidth",
+                            "maxScale"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "initialHeight",
+                        "autoSize",
+                        "fullWidth"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "theme": {
+                      "type": "object",
+                      "properties": {
+                        "queryParameter": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                        },
+                        "values": {
+                          "type": "object",
+                          "properties": {
+                            "light": {
+                              "type": "string"
+                            },
+                            "dark": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "light",
+                            "dark"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "queryParameter",
+                        "values"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "order": {
+                      "type": "number"
+                    },
+                    "directory": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "id",
+                    "displayName",
+                    "language",
+                    "template",
+                    "kind",
+                    "valueParser",
+                    "presentation",
+                    "order",
+                    "directory"
+                  ],
+                  "additionalProperties": false
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "renderer": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "renderer"
+                  ],
+                  "additionalProperties": false
+                },
+                "catalogRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "provider",
+                "revisions",
+                "catalogRevision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.providers.customize",
+        "version": "1.0.0",
+        "method": "command.providers.customize",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "providers.customize",
+            "description": "Create editable files for one embed provider using its observed document and catalog revisions; preserve existing custom renderer bytes.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "renderer": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "catalog": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "renderer",
+                    "catalog"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "expected"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "language": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    },
+                    "template": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "youtube",
+                        "x",
+                        "generic"
+                      ]
+                    },
+                    "valueParser": {
+                      "type": "string",
+                      "enum": [
+                        "youtube-video-id",
+                        "x-post-id",
+                        "identity"
+                      ]
+                    },
+                    "presentation": {
+                      "type": "object",
+                      "properties": {
+                        "initialHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "autoSize": {
+                          "type": "boolean"
+                        },
+                        "fullWidth": {
+                          "type": "boolean"
+                        },
+                        "minHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "maxHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "aspectRatio": {
+                          "type": "string",
+                          "maxLength": 128
+                        },
+                        "httpReferrer": {
+                          "type": "string",
+                          "maxLength": 8192
+                        },
+                        "fitWidth": {
+                          "type": "object",
+                          "properties": {
+                            "naturalWidth": {
+                              "type": "number",
+                              "minimum": 1,
+                              "maximum": 2000
+                            },
+                            "maxScale": {
+                              "type": "number",
+                              "minimum": 1,
+                              "maximum": 4
+                            }
+                          },
+                          "required": [
+                            "naturalWidth",
+                            "maxScale"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "initialHeight",
+                        "autoSize",
+                        "fullWidth"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "theme": {
+                      "type": "object",
+                      "properties": {
+                        "queryParameter": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                        },
+                        "values": {
+                          "type": "object",
+                          "properties": {
+                            "light": {
+                              "type": "string"
+                            },
+                            "dark": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "light",
+                            "dark"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "queryParameter",
+                        "values"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "order": {
+                      "type": "number"
+                    },
+                    "directory": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "id",
+                    "displayName",
+                    "language",
+                    "template",
+                    "kind",
+                    "valueParser",
+                    "presentation",
+                    "order",
+                    "directory"
+                  ],
+                  "additionalProperties": false
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "renderer": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "renderer"
+                  ],
+                  "additionalProperties": false
+                },
+                "catalogRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "provider",
+                "revisions",
+                "catalogRevision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.providers.set",
+        "version": "1.0.0",
+        "method": "command.providers.set",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "providers.set",
+            "description": "Validate and save an embed-provider definition using observed document and catalog revisions. Preserve existing renderer code and reject duplicate languages.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "language": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    },
+                    "template": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "youtube",
+                        "x",
+                        "generic"
+                      ]
+                    },
+                    "valueParser": {
+                      "type": "string",
+                      "enum": [
+                        "youtube-video-id",
+                        "x-post-id",
+                        "identity"
+                      ]
+                    },
+                    "presentation": {
+                      "type": "object",
+                      "properties": {
+                        "initialHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "autoSize": {
+                          "type": "boolean"
+                        },
+                        "fullWidth": {
+                          "type": "boolean"
+                        },
+                        "minHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "maxHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "aspectRatio": {
+                          "type": "string",
+                          "maxLength": 128
+                        },
+                        "httpReferrer": {
+                          "type": "string",
+                          "maxLength": 8192
+                        },
+                        "fitWidth": {
+                          "type": "object",
+                          "properties": {
+                            "naturalWidth": {
+                              "type": "number",
+                              "minimum": 1,
+                              "maximum": 2000
+                            },
+                            "maxScale": {
+                              "type": "number",
+                              "minimum": 1,
+                              "maximum": 4
+                            }
+                          },
+                          "required": [
+                            "naturalWidth",
+                            "maxScale"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "initialHeight",
+                        "autoSize",
+                        "fullWidth"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "theme": {
+                      "type": "object",
+                      "properties": {
+                        "queryParameter": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                        },
+                        "values": {
+                          "type": "object",
+                          "properties": {
+                            "light": {
+                              "type": "string"
+                            },
+                            "dark": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "light",
+                            "dark"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "queryParameter",
+                        "values"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "order": {
+                      "type": "number"
+                    },
+                    "directory": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "id",
+                    "displayName",
+                    "language",
+                    "template",
+                    "kind",
+                    "valueParser",
+                    "presentation",
+                    "order",
+                    "directory"
+                  ],
+                  "additionalProperties": false
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "renderer": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "catalog": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "renderer",
+                    "catalog"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "provider",
+                "expected"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "language": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    },
+                    "template": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "youtube",
+                        "x",
+                        "generic"
+                      ]
+                    },
+                    "valueParser": {
+                      "type": "string",
+                      "enum": [
+                        "youtube-video-id",
+                        "x-post-id",
+                        "identity"
+                      ]
+                    },
+                    "presentation": {
+                      "type": "object",
+                      "properties": {
+                        "initialHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "autoSize": {
+                          "type": "boolean"
+                        },
+                        "fullWidth": {
+                          "type": "boolean"
+                        },
+                        "minHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "maxHeight": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 2000
+                        },
+                        "aspectRatio": {
+                          "type": "string",
+                          "maxLength": 128
+                        },
+                        "httpReferrer": {
+                          "type": "string",
+                          "maxLength": 8192
+                        },
+                        "fitWidth": {
+                          "type": "object",
+                          "properties": {
+                            "naturalWidth": {
+                              "type": "number",
+                              "minimum": 1,
+                              "maximum": 2000
+                            },
+                            "maxScale": {
+                              "type": "number",
+                              "minimum": 1,
+                              "maximum": 4
+                            }
+                          },
+                          "required": [
+                            "naturalWidth",
+                            "maxScale"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "initialHeight",
+                        "autoSize",
+                        "fullWidth"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "theme": {
+                      "type": "object",
+                      "properties": {
+                        "queryParameter": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                        },
+                        "values": {
+                          "type": "object",
+                          "properties": {
+                            "light": {
+                              "type": "string"
+                            },
+                            "dark": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "light",
+                            "dark"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "queryParameter",
+                        "values"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "order": {
+                      "type": "number"
+                    },
+                    "directory": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "id",
+                    "displayName",
+                    "language",
+                    "template",
+                    "kind",
+                    "valueParser",
+                    "presentation",
+                    "order",
+                    "directory"
+                  ],
+                  "additionalProperties": false
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "renderer": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "renderer"
+                  ],
+                  "additionalProperties": false
+                },
+                "catalogRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "provider",
+                "revisions",
+                "catalogRevision"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      }
+    ]
   },
   "permissions": {
     "browser": {
@@ -504,7 +2946,73 @@
       "allowUserEndpoints": true
     },
     "storage": {
-      "vault": true
+      "vault": true,
+      "metadata": [
+        "plugins/data/surfing"
+      ]
     }
+  },
+  "settingsSchema": {
+    "fields": [
+      {
+        "key": "homepage",
+        "label": "Homepage",
+        "type": "custom",
+        "settingsVisible": false,
+        "schema": {
+          "type": "string"
+        },
+        "default": ""
+      },
+      {
+        "key": "searchEngine",
+        "label": "Search engine",
+        "type": "custom",
+        "settingsVisible": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "google",
+            "bing",
+            "duckduckgo",
+            "baidu",
+            "yahoo"
+          ]
+        },
+        "default": "google"
+      },
+      {
+        "key": "openExternalInApp",
+        "label": "Open external links in app",
+        "type": "custom",
+        "settingsVisible": false,
+        "schema": {
+          "type": "boolean"
+        },
+        "default": false
+      },
+      {
+        "key": "openWebsiteOnNewTab",
+        "label": "Open homepage in new tabs",
+        "type": "custom",
+        "settingsVisible": false,
+        "schema": {
+          "type": "boolean"
+        },
+        "default": true
+      },
+      {
+        "key": "activeProfileId",
+        "label": "Active browser profile",
+        "type": "custom",
+        "settingsVisible": false,
+        "schema": {
+          "type": "string"
+        },
+        "default": "default",
+        "readOnly": true,
+        "description": "Owner-managed runtime state; change it through the owning domain operation."
+      }
+    ]
   }
 }
