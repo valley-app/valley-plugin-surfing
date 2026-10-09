@@ -1,10 +1,11 @@
-import { METADATA_PANEL_SEGMENT_V1, provideBookmarkSurface, type PluginInspectionSubject, type PluginProperty, type ValleyPluginApi } from '@valley/plugin-sdk'
+import { METADATA_PANEL_SEGMENT_V1, provideBookmarkSurface, type PluginCommand, type PluginInspectionSubject, type PluginProperty, type ValleyPluginApi } from '@valley/plugin-sdk'
 import { z } from 'zod'
+import { surfingCommandResult } from './commandResults'
 import { api, React } from './runtime'
 import type { WebStore } from './store'
 import { canDeleteProfile, canHideProfile, INCOGNITO_PROFILE_ID, profileSettingsPatchSchema } from './profiles'
 import { EyeglassesIcon } from './icons'
-import { loadEmbedProviders, customizeEmbedProvider, createCustomEmbedProvider, embedProviderPath } from './embedProviders'
+import { loadEmbedProviders, customizeEmbedProvider, createCustomEmbedProviderSaved, embedProviderFilesRevert, embedProviderPath, type SavedEmbedProvider } from './embedProviders'
 import { uiText } from './localization'
 import type { InteropValueSchema } from '@valley/plugin-sdk'
 import { readSurfingFileBookmark, subscribeSurfingFileBookmarks, updateSurfingFileBookmark, type SurfingFileBookmarkState } from './workspaceDetails'
@@ -30,7 +31,10 @@ const bookmarkStateSchema = {
 
 
 
-const object = (raw: unknown): Record<string, unknown> => {
+const refused = (code: string, message: string) => Object.assign(new Error(message), { code, outcome: 'not-applied', retryable: false })
+type CommandContext = Parameters<PluginCommand<unknown, unknown, 'write'>['run']>[1]
+type Revert = { label: string; run(ctx: CommandContext): Promise<void>; reapply?(ctx: CommandContext): Promise<void> }
+const object =(raw: unknown): Record<string, unknown> => {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(uiText('surfing.error.input'))
   return raw as Record<string, unknown>
 }
@@ -49,7 +53,7 @@ const string = { type: 'string', minLength: 1 }
 
 function profileFor(store: WebStore, id: string) {
   const profile = store.getSnapshot().profiles.find((item) => item.id === id)
-  if (!profile) throw new Error(uiText('surfing.error.profile'))
+  if (!profile) throw refused('TARGET_NOT_FOUND', uiText('surfing.error.profile'))
   return profile
 }
 
@@ -57,7 +61,7 @@ async function profileRevision(store: WebStore, profileId: string): Promise<stri
   const before = JSON.stringify(profileFor(store, profileId))
   const bytes = new TextEncoder().encode(before)
   const hash = await crypto.subtle.digest('SHA-256', bytes)
-  if (JSON.stringify(profileFor(store, profileId)) !== before) throw new Error(uiText('surfing.error.profileChanged'))
+  if (JSON.stringify(profileFor(store, profileId)) !== before) throw refused('REVISION_CONFLICT', uiText('surfing.error.profileChanged'))
   return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
@@ -121,6 +125,31 @@ function Properties({ store, subject, kind }: { store: WebStore; subject?: Plugi
 }
 
 export function registerSurfingSurfaces(pluginApi: ValleyPluginApi, store: WebStore, ready: Promise<void>): () => void {
+  const root = pluginApi.getState().vault?.path
+  let active = true, revoked = false
+  const offVault = pluginApi.subscribeState(['vault'], ({ state }) => { if (state.vault?.path !== root) revoked = true })
+  const current = () => active && !revoked && pluginApi.getState().vault?.path === root
+  // An undo/redo after a vault switch or unload would reach another vault's owner; refuse it before any effect.
+  const scoped = (revert: Revert): Revert => {
+    const check = () => { if (!current()) throw refused('OWNER_CHANGED', uiText('surfing.error.vaultChanged')) }
+    const reapply = revert.reapply
+    return { ...revert, run: async ctx => { check(); await revert.run(ctx) }, ...(reapply ? { reapply: async (ctx: CommandContext) => { check(); await reapply(ctx) } } : {}) }
+  }
+  const register = <I, O, E extends 'read' | 'write'>(command: PluginCommand<I, O, E>): (() => void) => pluginApi.commands.register<I, O, E>({
+    ...command, outputSchema: surfingCommandResult(command.id),
+    limits: { requestBytes: 1048576, responseBytes: 16777216 },
+    recovery: command.sideEffect === 'read' ? 'observational' : 'non-replayable',
+    run: async (input: I, context) => {
+      await ready.catch((cause: unknown) => { throw Object.assign(new Error(cause instanceof Error ? cause.message : String(cause), { cause }), { code: 'ACTION_UNAVAILABLE', outcome: 'not-applied', retryable: false }) })
+      if (!current()) throw refused('OWNER_CHANGED', uiText('surfing.error.profile'))
+      context.cancellation?.throwIfAborted()
+      const result = await command.run(input, context)
+      if (command.sideEffect !== 'write') return result
+      const written = result as unknown as { revert: Revert | Revert[] | null }
+      if (!written.revert) return result
+      return { ...written, revert: Array.isArray(written.revert) ? written.revert.map(scoped) : scoped(written.revert) } as unknown as typeof result
+    }
+  } as typeof command & { outputSchema: Record<string, unknown> })
   const fileSchema: InteropValueSchema = { type: 'object', properties: { path: { type: 'string' }, search: { type: 'string' }, page: { type: 'number' }, selected: { type: 'union', anyOf: [{ type: 'string' }, { type: 'null' }] } }, required: ['path', 'search', 'page', 'selected'], additionalProperties: false }
   const filePath = (value: unknown): value is string => typeof value === 'string' && /\.(?:url|mht(?:ml)?|har)$/i.test(value)
   const surfaces = ['main_workspace', 'left_sidebar'] as const
@@ -170,36 +199,36 @@ export function registerSurfingSurfaces(pluginApi: ValleyPluginApi, store: WebSt
   offs.push(pluginApi.interop.extensions.provide(METADATA_PANEL_SEGMENT_V1, { id: 'surfing.websiteProperties', label: 'Website metadata', labelKey: 'surfing.metadata.website', icon: 'globe', pluginSurfaces: ['main_workspace'], inspect: ({ subject }) => inspectWebsite(store, subject), render: ({ subject }) => <Properties store={store} subject={subject} kind="website" /> }))
   offs.push(pluginApi.interop.extensions.provide(METADATA_PANEL_SEGMENT_V1, { id: 'surfing.profileProperties', label: 'Profile metadata', labelKey: 'surfing.metadata.profile', icon: 'user', pluginSurfaces: ['main_workspace'], inspect: ({ subject }) => inspectProfile(store, subject), render: ({ subject }) => <Properties store={store} subject={subject} kind="profile" /> }))
   const profileInput = { schema: schema({ profileId: string }, ['profileId']), parse: (raw: unknown) => ({ profileId: required(object(raw).profileId, 'profileId') }) }
-  offs.push(pluginApi.commands.register({ id: 'list-profiles', label: 'Surfing: List browser profiles', labelKey: 'surfing.command.listProfiles', sideEffect: 'read', paletteSafe: false, run: async () => { await ready; return store.getSnapshot().profiles } }))
+  offs.push(register({ id: 'list-profiles', label: 'Surfing: List browser profiles', labelKey: 'surfing.command.listProfiles', sideEffect: 'read', paletteSafe: false, run: async () => { await ready; return store.getSnapshot().profiles } }))
   const patchRequest = z.object({ profileId: z.string().min(1).max(256), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/), patch: profileSettingsPatchSchema }).strict()
-  offs.push(pluginApi.commands.register({ id: 'read-profile-settings', label: 'Surfing: Read profile and ad-block settings', labelKey: 'surfing.command.readProfileSettings', sideEffect: 'read', paletteSafe: false, input: profileInput,
+  offs.push(register({ id: 'read-profile-settings', label: 'Surfing: Read profile and ad-block settings', labelKey: 'surfing.command.readProfileSettings', sideEffect: 'read', paletteSafe: false, input: profileInput,
     run: async ({ profileId }) => { await ready; await store.flushProfiles(); return { profile: profileFor(store, profileId), revision: await profileRevision(store, profileId) } } }))
-  offs.push(pluginApi.commands.register({ id: 'patch-profile-settings', label: 'Surfing: Update profile and ad-block settings', labelKey: 'surfing.command.patchProfileSettings', sideEffect: 'write', paletteSafe: false,
+  offs.push(register({ id: 'patch-profile-settings', label: 'Surfing: Update profile and ad-block settings', labelKey: 'surfing.command.patchProfileSettings', sideEffect: 'write', paletteSafe: false,
     input: { schema: schema({ profileId: { type: 'string', minLength: 1, maxLength: 256 }, expectedRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' }, patch: { ...schema({ name: { type: 'string', minLength: 1, maxLength: 500 }, icon: { type: 'string', maxLength: 128 }, hidden: { type: 'boolean' }, adblockEnabled: { type: 'boolean' }, adblockRules: { type: 'string', maxLength: 65536 }, adblockFrequency: { type: 'integer', minimum: 0, maximum: 3650 } }), minProperties: 1 } }, ['profileId', 'expectedRevision', 'patch']), parse: raw => patchRequest.parse(raw) },
     preview: input => input, revision: ({ profileId }) => profileRevision(store, profileId),
     run: async ({ profileId, expectedRevision, patch }) => {
       await ready
-      if (expectedRevision !== await profileRevision(store, profileId)) throw new Error(uiText('surfing.error.profileChanged'))
+      if (expectedRevision !== await profileRevision(store, profileId)) throw refused('REVISION_CONFLICT', uiText('surfing.error.profileChanged'))
       const profile = profileFor(store, profileId)
-      if (profile.private && ['name', 'icon', 'hidden'].some(key => Object.hasOwn(patch, key))) throw new Error(uiText('surfing.error.incognito'))
-      if (patch.hidden === true && !canHideProfile(store.getSnapshot().profiles, profileId)) throw new Error(uiText('surfing.error.lastProfile'))
+      if (profile.private && ['name', 'icon', 'hidden'].some(key => Object.hasOwn(patch, key))) throw refused('ACTION_UNAVAILABLE', uiText('surfing.error.incognito'))
+      if (patch.hidden === true && !canHideProfile(store.getSnapshot().profiles, profileId)) throw refused('ACTION_UNAVAILABLE', uiText('surfing.error.lastProfile'))
       await store.patchProfileSettings(profileId, patch)
       return { value: { profile: profileFor(store, profileId), revision: await profileRevision(store, profileId) }, revert: null }
     } }))
-  offs.push(pluginApi.commands.register({ id: 'create-profile', label: 'Surfing: Create a browser profile', labelKey: 'surfing.command.createProfile', sideEffect: 'write', paletteSafe: false, input: { schema: schema({ name: string }, ['name']), parse: (raw) => ({ name: required(object(raw).name, 'name') }) }, preview: (input) => input, run: async ({ name }) => { await ready; const id = store.addProfile(name); await store.flushProfiles(); return { value: profileFor(store, id), revert: null } } }))
-  offs.push(pluginApi.commands.register({ id: 'delete-profile', label: 'Surfing: Delete a browser profile', labelKey: 'surfing.command.deleteProfile', sideEffect: 'write', paletteSafe: false, input: profileInput, preview: (input) => input, revision: ({ profileId }) => profileFor(store, profileId), run: async ({ profileId }) => {
+  offs.push(register({ id: 'create-profile', label: 'Surfing: Create a browser profile', labelKey: 'surfing.command.createProfile', sideEffect: 'write', paletteSafe: false, input: { schema: schema({ name: string }, ['name']), parse: (raw) => ({ name: required(object(raw).name, 'name') }) }, preview: (input) => input, run: async ({ name }) => { await ready; const id = await store.createProfile(name); return { value: profileFor(store, id), revert: null } } }))
+  offs.push(register({ id: 'delete-profile', label: 'Surfing: Delete a browser profile', labelKey: 'surfing.command.deleteProfile', sideEffect: 'write', paletteSafe: false, input: profileInput, preview: (input) => input, revision: ({ profileId }) => profileFor(store, profileId), run: async ({ profileId }) => {
     profileFor(store, profileId)
-    if (profileId === INCOGNITO_PROFILE_ID) throw new Error(uiText('surfing.error.incognito'))
-    if (!canDeleteProfile(store.getSnapshot().profiles, profileId)) throw new Error(uiText('surfing.error.lastProfile'))
+    if (profileId === INCOGNITO_PROFILE_ID) throw refused('ACTION_UNAVAILABLE', uiText('surfing.error.incognito'))
+    if (!canDeleteProfile(store.getSnapshot().profiles, profileId)) throw refused('ACTION_UNAVAILABLE', uiText('surfing.error.lastProfile'))
     await store.deleteProfile(profileId); return { value: { profileId }, revert: null }
   } }))
-  for (const operation of ['clear-history', 'clear-browser-data'] as const) offs.push(pluginApi.commands.register({ id: operation, label: operation === 'clear-history' ? 'Surfing: Clear browser history' : 'Surfing: Clear browser data', labelKey: `surfing.command.${operation}`, sideEffect: 'write', paletteSafe: false, input: profileInput, preview: (input) => input, run: async ({ profileId }) => { profileFor(store, profileId); if (operation === 'clear-history') await store.clearHistory(profileId); else await store.clearBrowserData(profileId); return { value: { profileId }, revert: null } } }))
-  offs.push(pluginApi.commands.register({ id: 'read-history', label: 'Surfing: Read browser history', labelKey: 'surfing.command.readHistory', sideEffect: 'read', paletteSafe: false, input: profileInput, run: async ({ profileId }) => { profileFor(store, profileId); return store.readHistory(profileId) } }))
+  for (const operation of ['clear-history', 'clear-browser-data'] as const) offs.push(register({ id: operation, label: operation === 'clear-history' ? 'Surfing: Clear browser history' : 'Surfing: Clear browser data', labelKey: `surfing.command.${operation}`, sideEffect: 'write', paletteSafe: false, input: profileInput, preview: (input) => input, run: async ({ profileId }) => { profileFor(store, profileId); if (operation === 'clear-history') await store.clearHistory(profileId); else await store.clearBrowserData(profileId); return { value: { profileId }, revert: null } } }))
+  offs.push(register({ id: 'read-history', label: 'Surfing: Read browser history', labelKey: 'surfing.command.readHistory', sideEffect: 'read', paletteSafe: false, input: profileInput, run: async ({ profileId }) => { profileFor(store, profileId); return store.readHistory(profileId) } }))
   const pageInput = { schema: schema({ profileId: string, kind: { type: 'string', enum: ['favorite', 'reading'] }, url: string, title: { type: 'string' } }, ['profileId', 'kind', 'url']), parse: (raw: unknown) => {
     const value = object(raw); if (!['favorite', 'reading'].includes(String(value.kind))) throw new Error(uiText('surfing.error.invalid', { value: 'kind' }))
     return { profileId: required(value.profileId, 'profileId'), kind: value.kind as 'favorite' | 'reading', url: safeUrl(value.url), title: typeof value.title === 'string' ? value.title : '' }
   } }
-  for (const operation of ['save-page', 'remove-page'] as const) offs.push(pluginApi.commands.register({ id: operation, label: operation === 'save-page' ? 'Surfing: Save a page' : 'Surfing: Remove a saved page', labelKey: `surfing.command.${operation}`, sideEffect: 'write', paletteSafe: false, input: pageInput, preview: (input) => input, run: async ({ profileId, kind, url, title }) => {
+  for (const operation of ['save-page', 'remove-page'] as const) offs.push(register({ id: operation, label: operation === 'save-page' ? 'Surfing: Save a page' : 'Surfing: Remove a saved page', labelKey: `surfing.command.${operation}`, sideEffect: 'write', paletteSafe: false, input: pageInput, preview: (input) => input, run: async ({ profileId, kind, url, title }) => {
     profileFor(store, profileId); await store.ensureProfileLoaded(profileId)
     if (kind === 'favorite') {
       if (operation === 'remove-page') await store.removeFavorite(profileId, url)
@@ -208,19 +237,19 @@ export function registerSurfingSurfaces(pluginApi: ValleyPluginApi, store: WebSt
     else await store.addToReadingList(profileId, { url, title, ts: Date.now() })
     return { value: { profileId, kind, url }, revert: null }
   } }))
-  offs.push(pluginApi.commands.register({ id: 'list-saved-pages', label: 'Surfing: List saved pages', labelKey: 'surfing.command.listSavedPages', sideEffect: 'read', paletteSafe: false, input: { schema: schema({ profileId: string, cursor: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 } }, ['profileId']), parse: (raw) => {
+  offs.push(register({ id: 'list-saved-pages', label: 'Surfing: List saved pages', labelKey: 'surfing.command.listSavedPages', sideEffect: 'read', paletteSafe: false, input: { schema: schema({ profileId: string, cursor: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 } }, ['profileId']), parse: (raw) => {
     const value = object(raw)
     const limit = value.limit ?? 100
     if (!Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 1000) throw new Error(uiText('surfing.error.invalid', { value: 'limit (1–1000)' }))
     if (value.cursor !== undefined && typeof value.cursor !== 'string') throw new Error(uiText('surfing.error.invalid', { value: 'cursor' }))
     return { profileId: required(value.profileId, 'profileId'), cursor: value.cursor as string | undefined, limit: Number(limit) }
   } }, run: async ({ profileId, cursor, limit }) => { await ready; profileFor(store, profileId); return pluginApi.data.dataset('surfing.saved_pages').query({ where: { profileId }, cursor, limit }) } }))
-  offs.push(pluginApi.commands.register({ id: 'list-embed-providers', label: 'Surfing: List embed providers', labelKey: 'surfing.command.listEmbedProviders', sideEffect: 'read', paletteSafe: false,
+  offs.push(register({ id: 'list-embed-providers', label: 'Surfing: List embed providers', labelKey: 'surfing.command.listEmbedProviders', sideEffect: 'read', paletteSafe: false,
     run: () => loadEmbedProviders(false) }))
-  offs.push(pluginApi.commands.register({ id: 'create-embed-provider', label: 'Surfing: Create an embed provider', labelKey: 'surfing.command.createEmbedProvider', sideEffect: 'write', paletteSafe: false,
-    run: async () => { const provider = await createCustomEmbedProvider(); return { value: { provider, path: embedProviderPath(provider) }, revert: null } } }))
-  offs.push(pluginApi.commands.register({ id: 'customize-embed-provider', label: 'Surfing: Customize an embed provider', labelKey: 'surfing.command.customizeEmbedProvider', sideEffect: 'write', paletteSafe: false,
+  offs.push(register({ id: 'create-embed-provider', label: 'Surfing: Create an embed provider', labelKey: 'surfing.command.createEmbedProvider', sideEffect: 'write', paletteSafe: false,
+    run: async () => { const saved = await createCustomEmbedProviderSaved(), provider = saved.provider; return { value: { provider, path: embedProviderPath(provider) }, revert: saved.restorable ? embedProviderFilesRevert(`Create ${provider.displayName}`, saved, expected => api.backend.call<SavedEmbedProvider>('providers.set', { provider, expected })) : null } } }))
+  offs.push(register({ id: 'customize-embed-provider', label: 'Surfing: Customize an embed provider', labelKey: 'surfing.command.customizeEmbedProvider', sideEffect: 'write', paletteSafe: false,
     input: { schema: schema({ id: { type: 'string', minLength: 1, maxLength: 128 } }, ['id']), parse: raw => ({ id: required(object(raw).id, 'id') }) },
-    preview: input => input, run: async ({ id }) => { const configuration = await loadEmbedProviders(false); const provider = configuration.providers.find(value => value.id === id); if (!provider) throw new Error(uiText('surfing.embed.providerMissing')); await customizeEmbedProvider(provider); return { value: { provider, path: embedProviderPath(provider) }, revert: null } } }))
-  return () => offs.forEach((off) => off())
+    preview: input => input, run: async ({ id }) => { const configuration = await loadEmbedProviders(false); const provider = configuration.providers.find(value => value.id === id); if (!provider) throw refused('TARGET_NOT_FOUND', uiText('surfing.embed.providerMissing')); const saved = await customizeEmbedProvider(provider); return { value: { provider, path: embedProviderPath(provider) }, revert: saved.restorable ? embedProviderFilesRevert(`Customize ${provider.displayName}`, saved, expected => api.backend.call<SavedEmbedProvider>('providers.customize', { id: provider.id, expected })) : null } } }))
+  return () => { active = false; offVault(); offs.forEach((off) => off()) }
 }

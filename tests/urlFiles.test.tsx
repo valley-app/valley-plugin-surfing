@@ -6,11 +6,13 @@ import { initRuntime } from '../src/runtime'
 import { isWebUrl, readShortcutUrl, writeShortcutUrl, UrlFileView } from '../src/UrlFileView'
 import { register } from '../src/index'
 import config from '../config.json'
+import type { MountedPluginView } from '@valley/plugin-sdk'
 
 afterEach(cleanup)
 
 const original = '\uFEFF[InternetShortcut]\r\nURL=https://example.test/old?q=a=b#section\r\nIconIndex=0\r\nIconFile=favicon.ico\r\n'
 const path = 'Links/Website.url'
+const mountedView = (tabId: string): MountedPluginView => ({ mountId: `shortcut-${tabId}`, generation: 1, area: 'main', paneId: `pane-${tabId}`, tabId, filePath: path, pluginId: 'surfing' })
 
 function setup(content = original) {
   const mock = createMockValleyApi({ files: { [path]: content } })
@@ -26,6 +28,51 @@ async function address() {
 }
 
 describe('Internet shortcut files', () => {
+  it('keeps two mounted shortcut drafts independent and saves only when the other copy is clean', async () => {
+    const mock = createMockValleyApi({ files: { [path]: original } })
+    initRuntime(mock.api)
+    const first = mountedView('first'), second = mountedView('second')
+    const view = render(<><UrlFileView relPath={path} tab={{ id: first.tabId, folderPath: path }} mountedView={first} /><UrlFileView relPath={path} tab={{ id: second.tabId, folderPath: path }} mountedView={second} /></>)
+    const inputs = screen.getAllByRole('textbox', { name: 'Shortcut URL' })
+    await waitFor(() => inputs.forEach(input => expect(input).not.toBeDisabled()))
+    fireEvent.change(inputs[0], { target: { value: 'https://first.test/fern' } })
+    fireEvent.change(inputs[1], { target: { value: 'https://second.test/moss' } })
+    await expect(mock.api.vault.writeFile(path, 'External overwrite')).rejects.toMatchObject({ code: 'DIRTY_EDITOR' })
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save URL' })[0])
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save')
+    expect(await mock.api.vault.readFile(path)).toBe(original)
+    expect(inputs[0]).toHaveValue('https://first.test/fern')
+    expect(inputs[1]).toHaveValue('https://second.test/moss')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reload file' })[1])
+    await waitFor(() => expect(inputs[1]).toHaveValue(readShortcutUrl(original)))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save URL' })[0])
+    await waitFor(() => expect(inputs[0]).not.toBeDisabled())
+    await waitFor(async () => expect(await mock.api.vault.readFile(path)).toBe(original.replace(readShortcutUrl(original), 'https://first.test/fern')))
+    expect(mock.api.vault.editors.save).toHaveBeenLastCalledWith(first, expect.stringContaining('https://first.test/fern'), expect.any(Object), expect.any(String))
+    view.rerender(<><UrlFileView relPath={path} tab={{ id: first.tabId, folderPath: path }} mountedView={{ ...first }} /><UrlFileView relPath={path} tab={{ id: second.tabId, folderPath: path }} mountedView={{ ...second }} /></>)
+    expect(mock.api.vault.editors.register).toHaveBeenCalledTimes(2)
+  })
+
+  it('freezes native and programmatic shortcut changes until a prepared lease is released', async () => {
+    const mock = createMockValleyApi({ files: { [path]: original } })
+    initRuntime(mock.api)
+    const view = mountedView('frozen')
+    render(<UrlFileView relPath={path} tab={{ id: view.tabId, folderPath: path }} mountedView={view} />)
+    const input = await address()
+    let lease!: Awaited<ReturnType<typeof mock.prepareFileEditors>>
+    await act(async () => { lease = await mock.prepareFileEditors(path) })
+    expect(input).toHaveAttribute('readonly')
+    expect(screen.getByRole('button', { name: 'Save URL' })).toBeDisabled()
+    fireEvent.change(input, { target: { value: 'https://blocked.test' } })
+    expect(input).toHaveValue(readShortcutUrl(original))
+    await lease.validate()
+    await act(async () => { await lease.release() })
+    fireEvent.change(input, { target: { value: 'https://released.test' } })
+    expect(input).toHaveValue('https://released.test')
+    await expect(mock.api.drivers.files.writeFile(path, 'Overwrite')).rejects.toMatchObject({ code: 'DIRTY_EDITOR' })
+    expect(await mock.api.vault.readFile(path)).toBe(original)
+  })
+
   it('uses managed audio and closes its guest when the file surface unmounts', async () => {
     const mock = createMockValleyApi({ files: { [path]: original } })
     const close = vi.spyOn(mock.api.drivers.browser, 'close')

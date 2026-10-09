@@ -171,6 +171,7 @@
   "surfing.error.storage": "无法访问浏览器存储。",
   "surfing.error.clear": "无法清除浏览器数据。请重试。",
   "surfing.error.profile": "此浏览器配置已不存在。请选择其他配置。",
+  "surfing.error.vaultChanged": "自执行此操作以来保管库已更改，因此无法在此撤销或重做。",
   "surfing.error.liveTab": "没有活动网页标签页“{{value}}”。",
   "surfing.error.url": "请使用 http 或 https 网站 URL。",
   "surfing.error.closedTab": "此浏览器标签页已关闭。请重新打开页面。",

@@ -1,3 +1,4 @@
+import { createWorkflowAdapter } from './workflow'
 import { FiltersEngine, Request, type RequestType } from '@ghostery/adblocker'
 import { z } from 'zod'
 import type { PluginBackendApi } from '@valley/plugin-sdk'
@@ -134,10 +135,11 @@ export function createFilters(api: PluginBackendApi) {
   return { configure, request, cosmetics, register() { off.add(api.rpc.handle('filter.configure', configure)); off.add(api.rpc.handle('filter.prepare', async (raw) => { const value = z.object({ partition: z.string().max(256) }).strict().parse(raw); await engine(value.partition) })); off.add(api.rpc.handle('filter.request', request)); off.add(api.rpc.handle('filter.cosmetics', cosmetics)); return () => { disposed = true; configurationRevision++; off.forEach((dispose) => dispose()); off.clear(); engines.clear(); profiles.clear() } } }
 }
 export function register(api: PluginBackendApi): () => void {
+  const workflow = createWorkflowAdapter(api)
   const offFilters = createFilters(api).register()
   const offArchives = registerArchiveReader(api)
-  const offFetch = registerFetch(api)
-  const offData = registerDataOwner(api)
-  const offProviders = registerProviderOwner(api)
-  return () => { offProviders(); offData(); offFetch(); offArchives(); offFilters() }
+  const offFetch = registerFetch({ ...api, rpc: { ...api.rpc, handleOperation: workflow.operation } })
+  const offData = registerDataOwner({ ...api, rpc: { ...api.rpc, handleOperation: workflow.operation } })
+  const offProviders = registerProviderOwner({ ...api, rpc: { ...api.rpc, handleOperation: workflow.operation } })
+  return () => { workflow.dispose(); offProviders(); offData(); offFetch(); offArchives(); offFilters() }
 }

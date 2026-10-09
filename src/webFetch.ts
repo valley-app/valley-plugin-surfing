@@ -150,7 +150,7 @@ export function createWebFetcher(api: ValleyPluginApi, store: WebStore): WebFetc
 
   const run = async (mode: WebFetchMode, input: WebFetchInput, cancellation?: ValleyCancellation): Promise<WebFetchPage> => {
     const url = fetchTarget(input.url)
-    if (!url) throw new WebFetchError('url')
+    if (!url) throw Object.assign(new WebFetchError('url'), { outcome: 'not-applied', retryable: false })
     const maxChars = Math.min(FETCH_MAX_CHARS, Math.max(500, Math.floor(input.maxChars ?? FETCH_DEFAULT_CHARS)))
     const key = `${mode}\n${url}`
     const started = Date.now()

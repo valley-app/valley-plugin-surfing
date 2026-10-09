@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { DatasetKey, DatasetRecord, DatasetWhere, PluginBackendApi, PluginBackendOperationContext } from '@valley/plugin-sdk'
+import type { DatasetKey, DatasetMutationOptions, DatasetRecord, DatasetTransactionOperation, DatasetWhere, PluginBackendApi, PluginBackendOperationContext } from '@valley/plugin-sdk'
 import { canDeleteProfile, canHideProfile, INCOGNITO_PROFILE_ID, newProfileId, normalizeProfile, normalizeProfileAdblock, normalizeSavedPage, profileSettingsPatchSchema, reconcileProfiles, type WebProfile } from '../profiles'
 
 type Owner = Pick<PluginBackendOperationContext['api'], 'data' | 'rpc'>
@@ -26,7 +26,9 @@ export const dataOutputSchemas = {
   appended: z.object({ recorded: z.boolean() }).strict()
 }
 function keyFor(row: DatasetRecord, fields: string[]): DatasetKey { return Object.fromEntries(fields.map(field => { const value = row[field]; if (typeof value !== 'string') throw new Error('Invalid stored record identity'); return [field, value] })) }
-function conflict(message = 'Stored data changed; reload before saving'): never { throw Object.assign(new Error(message), { code: 'REVISION_CONFLICT', outcome: 'not-applied' }) }
+function refused(code: string, message: string): never { throw Object.assign(new Error(message), { code, outcome: 'not-applied', retryable: false }) }
+function conflict(message = 'Stored data changed; reload before saving'): never { refused('REVISION_CONFLICT', message) }
+function parsed<S extends z.ZodTypeAny>(schema: S, raw: unknown): z.infer<S> { const result = schema.safeParse(raw); if (!result.success) refused('INVALID_INPUT', result.error.message); return result.data }
 export function createDataOwner(api: Owner, guard: () => void = () => {}) {
   const rows = async (dataset: string, where?: DatasetWhere) => {
     const records: DatasetRecord[] = []
@@ -40,6 +42,18 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
     guard()
     return { rows: records, revision: observed! }
   }
+  const transact = async (operations: DatasetTransactionOperation[], options: DatasetMutationOptions) => {
+    // The store rejects an insert or upsert without records, so an emptied dataset is written as its delete alone.
+    const effective = operations.filter(operation => (operation.operation !== 'insert' && operation.operation !== 'upsert') || (Array.isArray(operation.values) ? operation.values.length : operation.values))
+    guard()
+    try { return await api.data.transaction(effective, options) }
+    catch (error) {
+      // Revision guards and record validation run inside a rolled-back transaction, so a failure the store reports as known changed nothing.
+      const failure = error as { code?: unknown; outcome?: unknown; outcomeUnknown?: unknown } | null
+      if (failure && typeof failure === 'object' && failure.outcomeUnknown !== true && failure.outcome !== 'unknown' && (failure.outcomeUnknown === false || failure.code === 'conflict')) throw Object.assign(failure, { ...(failure.code === 'conflict' ? { code: 'REVISION_CONFLICT' } : {}), outcome: 'not-applied', retryable: false })
+      throw error
+    }
+  }
   const snapshot = async () => {
     const [profiles, adblock] = await Promise.all([rows('profiles'), rows('profile_adblock')])
     const byId = new Map(adblock.rows.map(row => [row.profileId, row]))
@@ -48,13 +62,13 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
   }
   const list = async () => { const { records: _, ...result } = await snapshot(); return result }
   const replace = async (raw: unknown) => {
-    const input = dataSchemas['profiles.set'].parse(raw), current = await snapshot()
+    const input = parsed(dataSchemas['profiles.set'], raw), current = await snapshot()
     if (current.revisions.profiles !== input.expected.profiles || current.revisions.adblock !== input.expected.adblock) conflict()
-    if (new Set(input.profiles.map(value => value.id)).size !== input.profiles.length || input.profiles.filter(value => value.private).length !== 1 || !input.profiles.some(value => value.id === INCOGNITO_PROFILE_ID && value.private) || !input.profiles.some(value => !value.private && !value.hidden)) throw new Error('Profiles must retain one private profile and at least one visible normal profile')
+    if (new Set(input.profiles.map(value => value.id)).size !== input.profiles.length || input.profiles.filter(value => value.private).length !== 1 || !input.profiles.some(value => value.id === INCOGNITO_PROFILE_ID && value.private) || !input.profiles.some(value => !value.private && !value.hidden)) refused('INVALID_INPUT', 'Profiles must retain one private profile and at least one visible normal profile')
     const oldPrivate = current.profiles.find(value => value.private)!, nextPrivate = input.profiles.find(value => value.private)!
-    if (['id', 'name', 'createdAt', 'icon', 'hidden'].some(key => JSON.stringify(oldPrivate[key as keyof WebProfile]) !== JSON.stringify(nextPrivate[key as keyof WebProfile]))) throw new Error('Private profile identity cannot change')
+    if (['id', 'name', 'createdAt', 'icon', 'hidden'].some(key => JSON.stringify(oldPrivate[key as keyof WebProfile]) !== JSON.stringify(nextPrivate[key as keyof WebProfile]))) refused('ACTION_UNAVAILABLE', 'Private profile identity cannot change')
     const removed = current.profiles.filter(value => !input.profiles.some(next => next.id === value.id)).map(value => value.id)
-    if (removed.some(value => !canDeleteProfile(current.profiles, value))) throw new Error('The private or last normal profile cannot be removed')
+    if (removed.some(value => !canDeleteProfile(current.profiles, value))) refused('ACTION_UNAVAILABLE', 'The private or last normal profile cannot be removed')
     const normal = input.profiles.filter(value => !value.private).map(({ id, name, createdAt, icon, hidden }) => ({ id, name, createdAt, icon: icon ?? null, hidden: hidden ?? null }))
     const blocker = input.profiles.map(({ id: profileId, adblockEnabled, adblockRules, adblockFrequency }) => ({ profileId, adblockEnabled, adblockRules, adblockFrequency }))
     const entries: Array<{ dataset: string; key: string[]; next: DatasetRecord[]; previous: { rows: DatasetRecord[]; revision: number } }> = [{ dataset: 'profiles', key: ['id'], next: normal, previous: current.records.profiles }, { dataset: 'profile_adblock', key: ['profileId'], next: blocker, previous: current.records.adblock }]
@@ -63,8 +77,7 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
       entries.push({ dataset, key: dataset === 'visits' ? ['id'] : ['profileId', 'kind', 'url'], next: previous.rows.filter(row => !removed.includes(String(row.profileId))), previous })
     }
     if (entries.every(entry => JSON.stringify(entry.previous.rows) === JSON.stringify(entry.next))) return { profiles: input.profiles, revisions: current.revisions, browserCleanupDeferred: [] }
-    guard()
-    const result = await api.data.transaction(entries.flatMap(entry => [
+    const result = await transact(entries.flatMap(entry => [
       ...entry.previous.rows.length ? [{ dataset: entry.dataset, operation: 'delete-many' as const, keys: entry.previous.rows.map(row => keyFor(row, entry.key)) }] : [],
       { dataset: entry.dataset, operation: 'upsert' as const, values: entry.next }
     ]), { expected: entries.map(entry => ({ dataset: entry.dataset, revision: entry.previous.revision })) })
@@ -73,7 +86,7 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
   }
   const profileFor = async (profileId: string) => {
     const current = await snapshot(), selected = current.profiles.find(value => value.id === profileId)
-    if (!selected) throw new Error('Browser profile is unavailable')
+    if (!selected) refused('TARGET_NOT_FOUND', 'Browser profile is unavailable')
     return { current, selected }
   }
   const pageList = async (dataset: 'saved_pages' | 'visits', input: { profileId: string; kind?: string }) => {
@@ -84,13 +97,13 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
   }
   const replacePages = async (dataset: 'saved_pages' | 'visits', input: { profileId: string; kind?: string; pages: z.infer<typeof page>[]; expectedRevision: number }) => {
     const { current, selected } = await profileFor(input.profileId)
-    if (selected.private) throw new Error('Private profile data is session-only')
-    if (new Set(input.pages.map(value => value.url)).size !== input.pages.length) throw new Error('Saved page URLs must be unique')
+    if (selected.private) refused('ACTION_UNAVAILABLE', 'Private profile data is session-only')
+    if (new Set(input.pages.map(value => value.url)).size !== input.pages.length) refused('INVALID_INPUT', 'Saved page URLs must be unique')
     const existing = await rows(dataset, { profileId: input.profileId, ...(input.kind ? { kind: input.kind } : {}) })
     if (existing.revision !== input.expectedRevision) conflict()
     const keys = existing.rows.map(row => keyFor(row, dataset === 'visits' ? ['id'] : ['profileId', 'kind', 'url']))
-    guard()
-    const result = await api.data.transaction([
+    if (!keys.length && !input.pages.length) return { pages: [], revision: existing.revision }
+    const result = await transact([
       ...(keys.length ? [{ dataset, operation: 'delete-many' as const, keys }] : []),
       { dataset, operation: 'upsert', values: input.pages.map((value, position) => ({ ...value, profileId: input.profileId, kind: input.kind!, position })) }
     ], { expected: [{ dataset, revision: input.expectedRevision }, { dataset: 'profiles', revision: current.revisions.profiles }] })
@@ -98,26 +111,26 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
     return { pages: input.pages, revision: result.revision }
   }
   return {
-    'profiles.list': async (raw: unknown) => { dataSchemas['profiles.list'].parse(raw); return list() },
+    'profiles.list': async (raw: unknown) => { parsed(dataSchemas['profiles.list'], raw); return list() },
     'profiles.set': replace,
-    'profiles.create': async (raw: unknown) => { const input = dataSchemas['profiles.create'].parse(raw), current = await list(); return replace({ expected: input.expected, profiles: [...current.profiles, { id: newProfileId(), name: input.name, createdAt: Date.now(), ...normalizeProfileAdblock({}) }] }) },
+    'profiles.create': async (raw: unknown) => { const input = parsed(dataSchemas['profiles.create'], raw), current = await list(); return replace({ expected: input.expected, profiles: [...current.profiles, { id: newProfileId(), name: input.name, createdAt: Date.now(), ...normalizeProfileAdblock({}) }] }) },
     'profiles.patch': async (raw: unknown) => {
-      const input = dataSchemas['profiles.patch'].parse(raw), { current, selected } = await profileFor(input.id)
-      if (selected.private && ['name', 'icon', 'hidden'].some(key => Object.hasOwn(input.patch, key))) throw new Error('Private profile identity cannot change')
-      if (input.patch.hidden && !canHideProfile(current.profiles, input.id)) throw new Error('The last visible profile cannot be hidden')
+      const input = parsed(dataSchemas['profiles.patch'], raw), { current, selected } = await profileFor(input.id)
+      if (selected.private && ['name', 'icon', 'hidden'].some(key => Object.hasOwn(input.patch, key))) refused('ACTION_UNAVAILABLE', 'Private profile identity cannot change')
+      if (input.patch.hidden && !canHideProfile(current.profiles, input.id)) refused('ACTION_UNAVAILABLE', 'The last visible profile cannot be hidden')
       return replace({ expected: input.expected, profiles: current.profiles.map(value => value.id === input.id ? { ...value, ...input.patch } : value) })
     },
-    'profiles.delete': async (raw: unknown) => { const input = dataSchemas['profiles.delete'].parse(raw), current = await list(); if (!canDeleteProfile(current.profiles, input.id)) throw new Error('Profile cannot be deleted'); return replace({ expected: input.expected, profiles: current.profiles.filter(value => value.id !== input.id) }) },
-    'saved.list': (raw: unknown) => pageList('saved_pages', dataSchemas['saved.list'].parse(raw)),
-    'saved.set': (raw: unknown) => replacePages('saved_pages', dataSchemas['saved.set'].parse(raw)),
-    'history.list': (raw: unknown) => pageList('visits', dataSchemas['history.list'].parse(raw)),
-    'history.clear': (raw: unknown) => replacePages('visits', { ...dataSchemas['history.clear'].parse(raw), pages: [] }),
+    'profiles.delete': async (raw: unknown) => { const input = parsed(dataSchemas['profiles.delete'], raw), current = await list(); if (!current.profiles.some(value => value.id === input.id)) refused('TARGET_NOT_FOUND', 'Browser profile is unavailable'); if (!canDeleteProfile(current.profiles, input.id)) refused('ACTION_UNAVAILABLE', 'Profile cannot be deleted'); return replace({ expected: input.expected, profiles: current.profiles.filter(value => value.id !== input.id) }) },
+    'saved.list': (raw: unknown) => pageList('saved_pages', parsed(dataSchemas['saved.list'], raw)),
+    'saved.set': (raw: unknown) => replacePages('saved_pages', parsed(dataSchemas['saved.set'], raw)),
+    'history.list': (raw: unknown) => pageList('visits', parsed(dataSchemas['history.list'], raw)),
+    'history.clear': (raw: unknown) => replacePages('visits', { ...parsed(dataSchemas['history.clear'], raw), pages: [] }),
     'history.append': async (raw: unknown) => {
-      const input = dataSchemas['history.append'].parse(raw), { current, selected } = await profileFor(input.profileId)
+      const input = parsed(dataSchemas['history.append'], raw), { current, selected } = await profileFor(input.profileId)
       if (selected.private) return { recorded: false }
-      if (!/^https?:/i.test(input.page.url)) throw new Error('History accepts HTTP(S) URLs only')
-      guard()
-      await api.data.transaction([{ dataset: 'visits', operation: 'insert', values: [{ ...input.page, id: input.id, profileId: input.profileId }] }], { expected: [{ dataset: 'profiles', revision: current.revisions.profiles }] })
+      if (!/^https?:/i.test(input.page.url)) refused('INVALID_INPUT', 'History accepts HTTP(S) URLs only')
+      if ((await rows('visits', { id: input.id })).rows.length) refused('INVALID_INPUT', 'History entry ID already exists')
+      await transact([{ dataset: 'visits', operation: 'insert', values: [{ ...input.page, id: input.id, profileId: input.profileId }] }], { expected: [{ dataset: 'profiles', revision: current.revisions.profiles }] })
       return { recorded: true }
     }
   }

@@ -1,5 +1,6 @@
 import { createUiText, uiText } from './localization'
-import type { BrowserAutomationService, BrowserActionResult, ValleyPluginApi } from '@valley/plugin-sdk'
+import { surfingCommandResult } from './commandResults'
+import type { BrowserAutomationService, BrowserActionResult, PluginCommand, ValleyPluginApi } from '@valley/plugin-sdk'
 import type { TextDocumentRead } from '@valley/plugin-sdk/types'
 import type { WebStore } from './store'
 import { FETCH_MAX_CHARS, formatFetchResult, htmlToMarkdown, type WebFetcher, type WebFetchInput, type WebFetchPage } from './webFetch'
@@ -19,10 +20,16 @@ function yamlString(value: string): string {
   return JSON.stringify(value)
 }
 
-const unavailableTab = (instanceId: string): BrowserActionResult => ({
+const unavailableTab = (instanceId: string): BrowserActionResult & { code: string; outcome: 'not-applied' } => ({
   ok: false,
-  error: uiText('surfing.error.liveTab', { value: instanceId })
+  error: uiText('surfing.error.liveTab', { value: instanceId }),
+  code: 'TARGET_NOT_FOUND',
+  outcome: 'not-applied'
 })
+
+const refused = (code: string, message: string): Error => Object.assign(new Error(message), { code, outcome: 'not-applied', retryable: false })
+
+export const driverFailure = (result: { error?: string; code?: unknown; outcome?: unknown }, fallback: string): Error => Object.assign(new Error(result.error || fallback), result.outcome === 'not-applied' ? { code: result.code, outcome: 'not-applied', retryable: false } : {})
 
 export function createBrowserAutomationService(
   api: ValleyPluginApi,
@@ -78,7 +85,7 @@ async function clippingPath(
   if (collision === 'overwrite') {
     const previous = await api.vault.readTextDocument(initial)
     assertActive()
-    if (!previous) throw new Error(createUiText(api)('surfing.error.readPage'))
+    if (!previous) throw refused('TARGET_NOT_FOUND', createUiText(api)('surfing.error.readPage'))
     return { relPath: initial, previous }
   }
   for (let index = 2; index < 10_000; index++) {
@@ -87,7 +94,7 @@ async function clippingPath(
     assertActive()
     if (!occupied) return { relPath, previous: null }
   }
-  throw new Error(uiText('surfing.error.clipName'))
+  throw refused('ACTION_UNAVAILABLE', uiText('surfing.error.clipName'))
 }
 
 export const FETCH_INPUT_SCHEMA = {
@@ -136,7 +143,7 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
   let disposal: Promise<void> | undefined
   const offVault = api.subscribeState(['vault'], ({ state }) => { if (state.vault?.path !== root) revoked = true })
   const assertActive = (): void => {
-    if (!active || revoked || api.getState().vault?.path !== root) throw new Error(uiText('surfing.error.saveClip'))
+    if (!active || revoked || api.getState().vault?.path !== root) throw Object.assign(new Error(uiText('surfing.error.saveClip')), { code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false })
   }
   const accept = <T>(operation: () => Promise<T>): Promise<T> => {
     try { assertActive() } catch (error) { return Promise.reject(error) }
@@ -146,8 +153,14 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
     return task
   }
   const browser = createBrowserAutomationService(api, store)
+  const register = <I, O, E extends 'read' | 'write' | 'execute'>(command: PluginCommand<I, O, E>): (() => void) => api.commands.register<I, O, E>({
+    ...command, outputSchema: surfingCommandResult(command.id),
+    limits: { requestBytes: 1048576, responseBytes: 16777216 },
+    recovery: command.sideEffect === 'read' ? 'observational' : 'non-replayable',
+    run: async (input: I, context) => { assertActive(); context.cancellation?.throwIfAborted(); return command.run(input, context) }
+  } as typeof command & { outputSchema: Record<string, unknown> })
   const offs = [
-    api.commands.register({
+    register({
       id: 'open',
       label: 'Surfing: Open a website in a new tab', labelKey: 'auto.e4ab509cac59',
       paletteSafe: true,
@@ -168,7 +181,7 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
       },
       formatCli: (v) => `Opened ${v.url || 'a new tab'} (${v.instanceId}).`
     }),
-    api.commands.register({
+    register({
       id: 'list',
       label: 'Surfing: list open tabs', labelKey: 'auto.f5734ca3ccaf',
       paletteSafe: false,
@@ -190,11 +203,11 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
         return tabs.map((t) => `- ${t.title || t.url || 'New tab'} (${t.instanceId}) — ${t.url}`).join('\n')
       }
     }),
-    api.commands.register({
+    register({
       id: 'switch',
       label: 'Surfing: Reveal a browser tab', labelKey: 'auto.f135c4de2eb1',
       paletteSafe: false,
-      sideEffect: 'read',
+      sideEffect: 'execute',
       input: {
         schema: { type: 'object', properties: { instanceId: { type: 'string', minLength: 1 } }, required: ['instanceId'], additionalProperties: false },
         parse: (raw) => {
@@ -205,14 +218,14 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
         },
         fromCli: (args) => ({ instanceId: args.join(' ').trim() })
       },
-      run: ({ instanceId }) => {
-        if (!store.getTab(instanceId)) throw new Error(uiText('surfing.error.liveTab', { value: instanceId }))
-        api.workspace.openMainTab({ instanceId })
+      run: async ({ instanceId }) => {
+        const result = await browser.switch(instanceId)
+        if (!result.ok) throw driverFailure(result, uiText('surfing.error.liveTab', { value: instanceId }))
         return { instanceId }
       },
       formatCli: (v) => `Revealed tab ${v.instanceId}.`
     }),
-    api.commands.register({
+    register({
       id: 'close',
       label: 'Surfing: Close a browser tab', labelKey: 'auto.09b21c342d80',
       paletteSafe: false,
@@ -231,12 +244,12 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
       revision: ({ instanceId }) => store.getTab(instanceId),
       run: async ({ instanceId }) => {
         const result = await browser.close(instanceId)
-        if (!result.ok) throw new Error(result.error || uiText('surfing.error.closeTab'))
+        if (!result.ok) throw driverFailure(result, uiText('surfing.error.closeTab'))
         return { value: { instanceId }, revert: null }
       },
       formatCli: (v) => `Closed tab ${v.instanceId}.`
     }),
-    api.commands.register<ClipInput, ClipResult, 'write'>({
+    register<ClipInput, ClipResult, 'write'>({
       id: 'clip',
       label: 'Surfing: Clip page to Markdown…', labelKey: 'auto.72f4410a7ff5',
       paletteSafe: false,
@@ -266,16 +279,16 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
       }),
       revision: async ({ instanceId }) => {
         const page = await store.browserReadHtml(instanceId)
-        if (!page.ok) throw new Error(page.error || uiText('surfing.error.closedTab'))
+        if (!page.ok) { const code = (page as { code?: unknown }).code; throw refused(typeof code === 'string' ? code : 'ACTION_UNAVAILABLE', page.error || uiText('surfing.error.closedTab')) }
         return page.data
       },
       run: ({ instanceId, collision }) => accept(async () => {
         assertActive()
         const response = await store.browserReadHtml(instanceId)
         assertActive()
-        if (!response.ok || !response.data?.html) throw new Error(response.error || uiText('surfing.error.readPage'))
+        if (!response.ok || !response.data?.html) { const code = (response as { code?: unknown }).code; throw refused(typeof code === 'string' ? code : 'ACTION_UNAVAILABLE', response.error || uiText('surfing.error.readPage')) }
         const article = htmlToMarkdown(response.data.html, response.data.url)
-        if (!article.article || !article.markdown) throw new Error(uiText('surfing.error.noArticle'))
+        if (!article.article || !article.markdown) throw refused('ACTION_UNAVAILABLE', uiText('surfing.error.noArticle'))
         const markdown = article.markdown
         const title = article.title || response.data.title.trim() || 'Untitled clipping'
         const target = await clippingPath(api, title, collision, assertActive)
@@ -296,30 +309,36 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
         const written = target.previous
           ? await api.vault.writeTextDocumentGuarded(target.relPath, content, target.previous.revisionToken)
           : await api.vault.createTextDocumentGuarded(target.relPath, content)
-        if (!written.ok) throw new Error(uiText('surfing.error.saveClip'))
+        if (!written.ok) throw written.reason === 'error'
+          ? Object.assign(new Error(uiText('surfing.error.saveClip')), { code: 'EFFECT_UNVERIFIED', outcome: 'unknown', retryable: false })
+          : refused('REVISION_CONFLICT', uiText('surfing.error.saveClip'))
         let receipt = 'revisionToken' in written ? written.revisionToken : null
         let state: 'applied' | 'reverted' | 'pending' = 'applied'
+        // A guarded vault refusal ('stale'/'conflict') wrote nothing; only 'error' leaves the effect unverified.
+        const guardedFailure = (reason: string, message: string): Error => reason === 'error'
+          ? Object.assign(new Error(message), { code: 'EFFECT_UNVERIFIED', outcome: 'unknown', retryable: false })
+          : refused('REVISION_CONFLICT', message)
         const replay = (direction: 'undo' | 'redo'): Promise<void> => accept(async () => {
           assertActive()
           const expected = direction === 'undo' ? 'applied' : 'reverted'
           const key = direction === 'undo' ? 'surfing.error.restorePrevious' : 'surfing.error.restoreClip'
-          if (state !== expected || ((direction === 'undo' || target.previous) && !receipt)) throw new Error(uiText(key))
+          if (state !== expected || ((direction === 'undo' || target.previous) && !receipt)) throw refused('ACTION_UNAVAILABLE', uiText(key))
           state = 'pending'
           if (target.previous) {
             const token = receipt!
             receipt = null
             const result = await api.vault.writeTextDocumentGuarded(target.relPath, direction === 'undo' ? target.previous.content : content, token)
-            if (!result.ok) throw new Error(uiText(key))
+            if (!result.ok) throw guardedFailure(result.reason, uiText(key))
             receipt = result.revisionToken
           } else if (direction === 'undo') {
             const token = receipt!
             receipt = null
             const removed = await api.vault.trashTextDocumentGuarded(target.relPath, token)
-            if (!removed.ok) throw new Error(uiText('surfing.error.deleteClip'))
+            if (!removed.ok) throw guardedFailure(removed.reason, uiText('surfing.error.deleteClip'))
             if (removed.editorConflict || !removed.recoverySaved) throw new Error(uiText(removed.recoverySaved ? 'surfing.error.deletedWithDraft' : 'surfing.error.deletedRecoveryFailed'), { cause: removed })
           } else {
             const created = await api.vault.createTextDocumentGuarded(target.relPath, content)
-            if (!created.ok) throw new Error(uiText(key))
+            if (!created.ok) throw guardedFailure(created.reason, uiText(key))
             receipt = created.revisionToken
           }
           state = direction === 'undo' ? 'reverted' : 'applied'
@@ -338,7 +357,7 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
         return result.cancelled ? 'Clipping cancelled.' : `Clipped page to ${result.relPath}.`
       }
     }),
-    api.commands.register<WebFetchInput, WebFetchPage, 'read'>({
+    register<WebFetchInput, WebFetchPage, 'read'>({
       id: 'fetch',
       label: 'Surfing: Fetch a web page as Markdown', labelKey: 'surfing.command.fetch',
       paletteSafe: false,
@@ -350,7 +369,7 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
       run: (input, context) => fetcher.fetch(input, context.cancellation),
       formatCli: formatFetchResult
     }),
-    api.commands.register<WebFetchInput, WebFetchPage, 'write'>({
+    register<WebFetchInput, WebFetchPage, 'write'>({
       id: 'fetch-rendered',
       label: 'Surfing: Fetch a rendered web page in a visible tab', labelKey: 'surfing.command.fetch-rendered',
       paletteSafe: false,

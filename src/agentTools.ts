@@ -1,4 +1,5 @@
 import { uiText } from './localization'
+import { surfingCommandResult } from './commandResults'
 import {
   createAgentToolProvider,
   type AgentToolDefinition,
@@ -7,7 +8,7 @@ import {
   type ValleyPluginApi,
   type BrowserAutomationService
 } from '@valley/plugin-sdk'
-import { FETCH_INPUT_SCHEMA, parseFetchInput } from './commands'
+import { driverFailure, FETCH_INPUT_SCHEMA, parseFetchInput } from './commands'
 import { formatFetchResult, type WebFetcher, type WebFetchPage } from './webFetch'
 
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({
@@ -202,6 +203,10 @@ function fromCli(parameters: Record<string, unknown>) {
 }
 
 export function registerBrowserAgentCommands(api: ValleyPluginApi, service: BrowserAutomationService): () => void {
+  const root = api.getState().vault?.path
+  let active = true, revoked = false
+  const offVault = api.subscribeState(['vault'], ({ state }) => { if (state.vault?.path !== root) revoked = true })
+  const assertActive = () => { if (!active || revoked || api.getState().vault?.path !== root) throw Object.assign(new Error(uiText('surfing.error.closedTab')), { code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false }) }
   const provider = browserTools(service)
   const actions: Record<string, (input: Record<string, unknown>) => Promise<{ ok: boolean; error?: string; data?: unknown }>> = {
     browser_list_tabs: () => service.list(), browser_open_tab: (input) => service.open(str(input.url)),
@@ -218,6 +223,8 @@ export function registerBrowserAgentCommands(api: ValleyPluginApi, service: Brow
   const offs = provider.tools.map((tool) => api.commands.register({
     id: commandId(tool.name), label: COMMAND_LABELS[tool.name], labelKey: `surfing.command.${commandId(tool.name)}`,
     paletteSafe: false, agentVisibility: 'hidden', sideEffect: tool.sideEffect, timeoutMs: tool.timeoutMs, usage: usage(tool.name, tool.parameters),
+    outputSchema: surfingCommandResult(commandId(tool.name)), limits: { requestBytes: 1048576, responseBytes: 16777216 },
+    recovery: tool.sideEffect === 'read' ? 'observational' : 'non-replayable',
     input: { schema: tool.parameters, fromCli: fromCli(tool.parameters), parse: (raw) => {
       const value = raw === undefined ? {} : raw
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(uiText('surfing.error.input'))
@@ -241,14 +248,16 @@ export function registerBrowserAgentCommands(api: ValleyPluginApi, service: Brow
       if (!tab) throw new Error(uiText('surfing.error.closedTab'))
       return tab
     },
-    run: async (input) => {
+    run: async (input, context) => {
+      assertActive()
+      context.cancellation?.throwIfAborted()
       const result = await actions[tool.name](input)
-      if (!result.ok) throw new Error(result.error || uiText('surfing.error.action'))
+      if (!result.ok) throw driverFailure(result, uiText('surfing.error.action'))
       const value = result.data ?? { done: true }
       return tool.sideEffect === 'write' ? { value, revert: null } : value
     }
   }))
-  return () => offs.forEach((off) => off())
+  return () => { active = false; offVault(); offs.forEach((off) => off()) }
 }
 
 export function surfingAgentTools(service: BrowserAutomationService, api?: ValleyPluginApi, fetcher?: WebFetcher): AgentToolProvider {

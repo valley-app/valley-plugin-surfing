@@ -5,6 +5,7 @@ import { uiText } from './localization'
 import { ARCHIVE_MAX_BYTES, ArchiveError, fromBase64, parseHar, parseMhtml, harBody, type ArchiveFailure, type ArchiveReadResult, type HarEntry } from './archives'
 import { archiveDocument } from './archivePreview'
 import { readSurfingFileBookmark, subscribeSurfingFileBookmarks, updateSurfingFileBookmark } from './workspaceDetails'
+import { useSurfingFileCommands } from './fileCommands'
 
 export async function loadArchive(relPath: string, controller: AbortController): Promise<Uint8Array> {
   const cancellation = valleyCancellationOf(controller)
@@ -32,7 +33,8 @@ export async function loadArchive(relPath: string, controller: AbortController):
 }
 
 function useArchive<T>(relPath: string, parse: (bytes: Uint8Array) => T) {
-  const [state, setState] = React.useState<{ value?: T; error?: ArchiveFailure; loading: boolean }>({ loading: true })
+  const [state, setState] = React.useState<{ value?: T; error?: ArchiveFailure; loading: boolean; documentRevision: number }>({ loading: true, documentRevision: 0 })
+  const generation = React.useRef(0)
   const [revision, reload] = React.useReducer(value => value + 1, 0)
   React.useEffect(() => {
     let active = true
@@ -41,12 +43,13 @@ function useArchive<T>(relPath: string, parse: (bytes: Uint8Array) => T) {
       controller?.abort()
       const request = new AbortController()
       controller = request
-      setState({ loading: true })
+      const documentRevision = ++generation.current
+      setState({ loading: true, documentRevision })
       try {
         const bytes = await loadArchive(relPath, request)
-        if (active && !valleyCancellationOf(request).aborted) setState({ value: parse(bytes), loading: false })
+        if (active && !valleyCancellationOf(request).aborted) setState({ value: parse(bytes), loading: false, documentRevision })
       } catch (error) {
-        if (active && !valleyCancellationOf(request).aborted) setState({ error: error instanceof ArchiveError ? error.code : 'readError', loading: false })
+        if (active && !valleyCancellationOf(request).aborted) setState({ error: error instanceof ArchiveError ? error.code : 'readError', loading: false, documentRevision })
       }
     }
     void read()
@@ -63,10 +66,19 @@ function ArchiveMessage({ loading, error }: { loading: boolean; error?: ArchiveF
 }
 
 const parsePage = (bytes: Uint8Array): string => archiveDocument(parseMhtml(bytes))
-const MhtmlView: PluginFileView = ({ relPath }) => {
+const MhtmlView: PluginFileView = ({ relPath, mountedView }) => {
   const state = useArchive(relPath, parsePage)
   const cleanup = React.useRef<(() => void) | undefined>(undefined)
-  React.useEffect(() => () => { cleanup.current?.(); cleanup.current = undefined }, [state.value])
+  const archiveDocumentRef = React.useRef<Document | null>(null), currentAnchor = React.useRef<string | null>(null)
+  React.useLayoutEffect(() => () => { cleanup.current?.(); cleanup.current = undefined; archiveDocumentRef.current = null; currentAnchor.current = null }, [state.value])
+  useSurfingFileCommands(mountedView, {
+    snapshot: () => { const anchors = [...(archiveDocumentRef.current?.querySelectorAll('[id]') ?? [])].map(element => element.id); if (anchors.length > 1000) throw Object.assign(new Error('The complete MHTML anchor list exceeds its observation bound.'), { code: 'OUTPUT_TOO_LARGE', outcome: 'not-applied' }); return { kind: 'mhtml', loading: state.loading, error: state.error ?? null, documentRevision: state.documentRevision, anchors, currentAnchor: currentAnchor.current } },
+    run: (action) => {
+      if (action.type === 'reload') state.reload()
+      else if (action.type === 'anchor') { const target = archiveDocumentRef.current?.getElementById(action.value); if (state.loading || state.error || !target) throw Object.assign(new Error('This exact loaded MHTML anchor is unavailable.'), { outcome: 'not-applied' }); target.scrollIntoView(); currentAnchor.current = action.value }
+      else throw Object.assign(new Error('This control is unavailable for offline MHTML.'), { outcome: 'not-applied' })
+    }
+  })
   return <div className="web-page web-archive">
     <div className="web-toolbar"><span className="web-archive-label">{uiText('surfing.archive.offline')}</span><button className="web-link-btn" onClick={state.reload}>{uiText('surfing.shortcut.reload')}</button></div>
     <ArchiveMessage {...state} />
@@ -74,13 +86,14 @@ const MhtmlView: PluginFileView = ({ relPath }) => {
       cleanup.current?.()
       const doc = event.currentTarget.contentDocument
       if (!doc) return
+      archiveDocumentRef.current = doc
       const navigate = (event: MouseEvent) => {
         const link = (event.target as Element | null)?.closest('a[href]')
         if (!link) return
         event.preventDefault()
         const href = link.getAttribute('href') ?? ''
         if (href.startsWith('#')) {
-          try { doc.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView() } catch { /* Invalid fragment. */ }
+          try { const id = decodeURIComponent(href.slice(1)), target = doc.getElementById(id); if (target) { target.scrollIntoView(); currentAnchor.current = id } } catch { /* Invalid fragment. */ }
         }
       }
       doc.addEventListener('click', navigate)
@@ -113,7 +126,7 @@ function HarDetails({ entry }: { entry: HarEntry }) {
   </div>
 }
 
-const HarView: PluginFileView = ({ relPath }) => {
+const HarView: PluginFileView = ({ relPath, mountedView }) => {
   const state = useArchive(relPath, parseHar)
   const { search, selected, page } = React.useSyncExternalStore(listener => subscribeSurfingFileBookmarks(api, listener), () => readSurfingFileBookmark(api, relPath))
   const setSearch = (search: string) => updateSurfingFileBookmark(api, relPath, { search })
@@ -125,6 +138,21 @@ const HarView: PluginFileView = ({ relPath }) => {
   ), [state.value, search])
   const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / 100) - 1))
   const selectedEntry = selected === null ? undefined : rows.find(row => entryKey(row.entry) === selected)?.entry
+  useSurfingFileCommands(mountedView, {
+    snapshot: () => {
+      const live = readSurfingFileBookmark(api, relPath), filtered = (state.value ?? []).map((entry, index) => ({ entry, index })).filter(({ entry }) => `${entry.request.method} ${entry.request.url} ${entry.response.status} ${entry.response.content.mimeType ?? ''}`.toLowerCase().includes(live.search.toLowerCase()))
+      const pageCount = Math.max(1, Math.ceil(filtered.length / 100)), page = Math.min(live.page, pageCount - 1)
+      return { kind: 'har', loading: state.loading, error: state.error ?? null, documentRevision: state.documentRevision, search: live.search, page, pageCount, selected: live.selected, requests: filtered.slice(page * 100, (page + 1) * 100).map(({ entry, index }) => ({ key: entryKey(entry), index, method: entry.request.method, url: entry.request.url, status: entry.response.status })) }
+    },
+    run: action => {
+      if (action.type === 'reload') { state.reload(); return }
+      if (state.loading || state.error || !state.value) throw Object.assign(new Error('The exact HAR source is unavailable.'), { outcome: 'not-applied' })
+      if (action.type === 'search') { setSearch(action.value); setPage(0) }
+      else if (action.type === 'previous' || action.type === 'next') { const page = currentPage + (action.type === 'previous' ? -1 : 1); if (page < 0 || page >= Math.max(1, Math.ceil(rows.length / 100))) throw Object.assign(new Error('This HAR page is unavailable.'), { outcome: 'not-applied' }); setPage(page) }
+      else if (action.type === 'select') { if (!rows.slice(currentPage * 100, (currentPage + 1) * 100).some(row => entryKey(row.entry) === action.value)) throw Object.assign(new Error('This exact visible HAR request is unavailable.'), { outcome: 'not-applied' }); select(action.value) }
+      else throw Object.assign(new Error('This control is unavailable for the read-only HAR inspector.'), { outcome: 'not-applied' })
+    }
+  })
   return <div className="web-page web-archive">
     <div className="web-toolbar"><input type="search" className="web-address" aria-label={uiText('surfing.har.search')} placeholder={uiText('surfing.har.search')} value={search} onChange={event => { setSearch(event.target.value); setPage(0) }} /><button className="web-link-btn" onClick={state.reload}>{uiText('surfing.shortcut.reload')}</button></div>
     <ArchiveMessage {...state} />

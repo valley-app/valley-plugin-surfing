@@ -171,6 +171,7 @@
   "surfing.error.storage": "No se pudo acceder al almacenamiento del navegador.",
   "surfing.error.clear": "No se pudieron borrar los datos del navegador. Vuelve a intentarlo.",
   "surfing.error.profile": "Este perfil del navegador ya no existe. Elige otro.",
+  "surfing.error.vaultChanged": "La bóveda cambió desde que se ejecutó esta acción, así que no se puede deshacer ni rehacer aquí.",
   "surfing.error.liveTab": "No hay ninguna pestaña activa «{{value}}».",
   "surfing.error.url": "Usa una URL de sitio web con http o https.",
   "surfing.error.closedTab": "Esta pestaña está cerrada. Vuelve a abrir la página.",

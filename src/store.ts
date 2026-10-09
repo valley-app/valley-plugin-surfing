@@ -36,6 +36,14 @@ import {
   type WebSettings
 } from './profiles'
 import { api as runtimeApi } from './runtime'
+
+const profileRefusal = (code: string, message: string): Error => Object.assign(new Error(message), { code, outcome: 'not-applied', retryable: false })
+// A failure while observing state ahead of a saved-page or history write changed nothing.
+const beforeEffect = <T>(work: Promise<T>): Promise<T> => work.catch((cause: unknown) => {
+  if ((cause as { outcome?: unknown } | null)?.outcome === 'not-applied') throw cause
+  const code = (cause as { code?: unknown } | null)?.code
+  throw Object.assign(new Error(cause instanceof Error ? cause.message : String(cause), { cause }), { code: typeof code === 'string' && code ? code : 'ACTION_UNAVAILABLE', outcome: 'not-applied', retryable: false })
+})
 import type { WebFetchErrorCode, WebFetchMode, WebFetchPage } from './webFetch'
 
 export interface WebTabState {
@@ -190,6 +198,7 @@ export class WebStore {
   }
   private lastHistoryUrl = new Map<string, string>()
   private profileWrites: Promise<void> = Promise.resolve()
+  private profileEpoch = 0
   private profileLoad: Promise<void> | undefined
   private profileRevisions = new Map<string, number>()
   private committedProfiles: WebProfile[] = reconcileProfiles([])
@@ -463,28 +472,67 @@ export class WebStore {
   // ── Profiles ──────────────────────────────────────────────────────────────
   private persistProfiles(): Promise<void> {
     const nextProfiles = structuredClone(this.snap.profiles)
+    const epoch = this.profileEpoch
     const write = this.profileWrites.then(async () => {
       const profiles = this.profileRevisions.get(PROFILES_DATASET), adblock = this.profileRevisions.get(PROFILE_ADBLOCK_DATASET)
-      if (profiles === undefined || adblock === undefined) throw new Error(uiText('surfing.error.profileChanged'))
+      if (epoch !== this.profileEpoch || profiles === undefined || adblock === undefined) throw profileRefusal('REVISION_CONFLICT', uiText('surfing.error.profileChanged'))
       const result = await this.api.backend.call<ProfilesSnapshot>('data.profiles.set', { profiles: nextProfiles, expected: { profiles, adblock } })
       this.profileRevisions.set(PROFILES_DATASET, result.revisions.profiles)
       this.profileRevisions.set(PROFILE_ADBLOCK_DATASET, result.revisions.adblock)
       this.committedProfiles = result.profiles
       if (!this.disposed) this.syncAdblock()
     })
-    this.profileWrites = write
-    void write.catch(() => {
+    this.profileWrites = write.catch(async () => {
+      this.profileEpoch++
       this.setSnap({ profiles: structuredClone(this.committedProfiles), profileError: uiText('surfing.error.profileChanged') })
       this.syncAdblock()
+      await this.resyncProfiles()
     })
     return write
   }
 
+  // A failed profile write leaves its revisions unknown. Re-read the committed
+  // profiles so one failure does not refuse every later edit until a manual reload.
+  private async resyncProfiles(): Promise<void> {
+    if (this.disposed || !this.tabsLoaded) return
+    try {
+      const snapshot = await this.api.backend.call<ProfilesSnapshot>('data.profiles.list', {})
+      if (this.disposed) return
+      const known = (id: string): boolean => snapshot.profiles.some(profile => profile.id === id)
+      if (!known(this.snap.activeProfileId) || Object.values(this.snap.tabs).some(tab => !known(tab.profileId))) return
+      this.profileRevisions.set(PROFILES_DATASET, snapshot.revisions.profiles)
+      this.profileRevisions.set(PROFILE_ADBLOCK_DATASET, snapshot.revisions.adblock)
+      this.committedProfiles = structuredClone(snapshot.profiles)
+      this.setSnap({ profiles: structuredClone(snapshot.profiles), profileError: undefined })
+      this.syncAdblock()
+    } catch {
+      /* keep profileError; the settings Reload action retries */
+    }
+  }
+
   flushProfiles(): Promise<void> { return this.profileWrites }
 
+  private assertProfilesWritable(): void {
+    if (this.profileLoad || this.snap.profileError) throw profileRefusal('REVISION_CONFLICT', this.snap.profileError || uiText('surfing.error.profileChanged'))
+  }
+
   addProfile(name: string): string {
-    if (this.profileLoad || this.snap.profileError) throw new Error(this.snap.profileError || uiText('surfing.error.profileChanged'))
-    name = profileSettingsPatchSchema.parse({ name }).name!
+    const { id, saved } = this.stageProfile(name)
+    void saved.catch(() => {})
+    return id
+  }
+
+  async createProfile(name: string): Promise<string> {
+    const { id, saved } = this.stageProfile(name)
+    await saved
+    return id
+  }
+
+  private stageProfile(name: string): { id: string; saved: Promise<void> } {
+    this.assertProfilesWritable()
+    const parsed = profileSettingsPatchSchema.safeParse({ name })
+    if (!parsed.success) throw profileRefusal('INVALID_INPUT', uiText('surfing.error.invalid', { value: 'name' }))
+    name = parsed.data.name!
     const id = newProfileId()
     const profile: WebProfile = {
       id,
@@ -494,19 +542,19 @@ export class WebStore {
     }
     const profiles = reconcileProfiles([...this.snap.profiles, profile])
     this.setSnap({ profiles })
-    void this.persistProfiles()
+    const saved = this.persistProfiles()
     this.syncAdblock()
-    return id
+    return { id, saved }
   }
 
   patchProfileSettings(id: string, patch: Partial<Pick<WebProfile, 'name' | 'icon' | 'hidden' | 'adblockEnabled' | 'adblockRules' | 'adblockFrequency'>>): Promise<void> {
-    if (this.profileLoad) throw new Error(uiText('surfing.error.profileChanged'))
+    if (this.profileLoad) throw profileRefusal('REVISION_CONFLICT', uiText('surfing.error.profileChanged'))
     patch = profileSettingsPatchSchema.parse(patch)
     const current = this.snap.profiles.find(profile => profile.id === id)
-    if (!current) throw new Error(uiText('surfing.error.profile'))
-    if (this.snap.profileError) throw new Error(this.snap.profileError)
-    if (current.private && ['name', 'icon', 'hidden'].some(key => Object.hasOwn(patch, key))) throw new Error(uiText('surfing.error.incognito'))
-    if (patch.hidden === true && !canHideProfile(this.snap.profiles, id)) throw new Error(uiText('surfing.error.lastProfile'))
+    if (!current) throw profileRefusal('TARGET_NOT_FOUND', uiText('surfing.error.profile'))
+    this.assertProfilesWritable()
+    if (current.private && ['name', 'icon', 'hidden'].some(key => Object.hasOwn(patch, key))) throw profileRefusal('ACTION_UNAVAILABLE', uiText('surfing.error.incognito'))
+    if (patch.hidden === true && !canHideProfile(this.snap.profiles, id)) throw profileRefusal('ACTION_UNAVAILABLE', uiText('surfing.error.lastProfile'))
     const profiles = this.snap.profiles.map(profile => {
       if (profile.id !== id) return profile
       const next = { ...profile, ...patch }
@@ -542,7 +590,7 @@ export class WebStore {
   }
 
   async deleteProfile(id: string): Promise<void> {
-    if (this.profileLoad || this.snap.profileError) throw new Error(this.snap.profileError || uiText('surfing.error.profileChanged'))
+    this.assertProfilesWritable()
     if (!canDeleteProfile(this.snap.profiles, id)) return
     const profiles = reconcileProfiles(this.snap.profiles.filter((p) => p.id !== id))
     const replacementId = switcherProfiles(profiles)[0]?.id ?? profiles.find((p) => !p.private)?.id ?? DEFAULT_PROFILE_ID
@@ -556,7 +604,10 @@ export class WebStore {
     this.persistTabs()
     const retiredGuests = this.remountProfileViews(id)
     this.syncAdblock()
-    const clearedBrowserData = retiredGuests.then(() => this.clearBrowserData(id))
+    // The profile deletion is already committed, so a browser-data failure here is never a no-effect refusal.
+    const clearedBrowserData = retiredGuests.then(() => this.clearBrowserData(id)).catch((cause: unknown) => {
+      throw Object.assign(new Error(cause instanceof Error ? cause.message : String(cause), { cause }), { code: 'EFFECT_UNVERIFIED', outcome: 'unknown', retryable: false })
+    })
     // Drop the deleted profile's per-profile lists (history/favorites/reading).
     this.favCache.delete(id)
     this.readingCache.delete(id)
@@ -643,9 +694,9 @@ export class WebStore {
 
   private async persistSavedPages(profileId: string, kind: 'favorite' | 'reading', pages: SavedPage[]): Promise<void> {
     if (this.isPrivate(profileId)) return
-    await this.profileWrites
+    await beforeEffect(this.profileWrites)
     const expectedRevision = this.listRevisions.get(`saved:${profileId}:${kind}`)
-    if (expectedRevision === undefined) throw new Error('Reload saved pages before saving')
+    if (expectedRevision === undefined) throw profileRefusal('REVISION_CONFLICT', 'Reload saved pages before saving')
     const result = await this.api.backend.call<PagesSnapshot>('data.saved.set', { profileId, kind, pages, expectedRevision })
     for (const key of this.listRevisions.keys()) if (key.startsWith('saved:')) this.listRevisions.set(key, result.revision)
   }
@@ -653,7 +704,7 @@ export class WebStore {
   /** Ensure a profile's lists are loaded before a mutation (public — the page
    *  toolbar star acts on the viewed tab's profile, which may not be active). */
   ensureProfileLoaded(profileId: string): Promise<void> {
-    return this.loadProfileLists(profileId)
+    return beforeEffect(this.loadProfileLists(profileId))
   }
 
   /** How much a profile holds, for the Settings → Profiles rows. Reads the
@@ -699,7 +750,7 @@ export class WebStore {
    *  it never reaches disk, so nothing survives once the session ends. */
   async toggleFavorite(profileId: string, page: SavedPage): Promise<boolean> {
     if (!page.url) return false
-    await this.loadProfileLists(profileId)
+    await beforeEffect(this.loadProfileLists(profileId))
     const cur = this.favCache.get(profileId) ?? []
     const exists = cur.some((p) => p.url === page.url)
     const next = exists ? cur.filter((p) => p.url !== page.url) : [page, ...cur]
@@ -710,7 +761,7 @@ export class WebStore {
   }
 
   async removeFavorite(profileId: string, url: string): Promise<void> {
-    await this.loadProfileLists(profileId)
+    await beforeEffect(this.loadProfileLists(profileId))
     const next = (this.favCache.get(profileId) ?? []).filter((p) => p.url !== url)
     await this.persistSavedPages(profileId, 'favorite', next)
     this.favCache.set(profileId, next)
@@ -721,7 +772,7 @@ export class WebStore {
    *  profiles keep the addition for the current session only (never persisted). */
   async addToReadingList(profileId: string, page: SavedPage): Promise<void> {
     if (!page.url) return
-    await this.loadProfileLists(profileId)
+    await beforeEffect(this.loadProfileLists(profileId))
     const cur = this.readingCache.get(profileId) ?? []
     const next = [page, ...cur.filter((p) => p.url !== page.url)]
     await this.persistSavedPages(profileId, 'reading', next)
@@ -730,7 +781,7 @@ export class WebStore {
   }
 
   async removeFromReadingList(profileId: string, url: string): Promise<void> {
-    await this.loadProfileLists(profileId)
+    await beforeEffect(this.loadProfileLists(profileId))
     const next = (this.readingCache.get(profileId) ?? []).filter((p) => p.url !== url)
     await this.persistSavedPages(profileId, 'reading', next)
     this.readingCache.set(profileId, next)
@@ -838,7 +889,7 @@ export class WebStore {
     await this.historyWriteQueue
     if (!this.isPrivate(profileId)) {
       let expectedRevision = this.listRevisions.get(`history:${profileId}`)
-      if (expectedRevision === undefined) { await this.readVisits(profileId); expectedRevision = this.listRevisions.get(`history:${profileId}`) }
+      if (expectedRevision === undefined) { await beforeEffect(this.readVisits(profileId)); expectedRevision = this.listRevisions.get(`history:${profileId}`) }
       const result = await this.api.backend.call<PagesSnapshot>('data.history.clear', { profileId, expectedRevision })
       this.listRevisions.set(`history:${profileId}`, result.revision)
     }
@@ -853,9 +904,10 @@ export class WebStore {
   async clearBrowserData(profileId: string): Promise<void> {
     const partition = partitionFor(profileId)
     const bound = await this.api.drivers.browser.bindPartition(partition)
-    if (!bound.ok) throw new Error(bound.error || uiText('surfing.error.storage'))
+    // Nothing was cleared until clearData dispatches; after that only the driver can vouch for no effect.
+    if (!bound.ok) throw profileRefusal('ACTION_UNAVAILABLE', bound.error || uiText('surfing.error.storage'))
     const result = await this.api.drivers.browser.clearData(partition)
-    if (!result.ok) throw new Error(result.error || uiText('surfing.error.clear'))
+    if (!result.ok) throw Object.assign(new Error(result.error || uiText('surfing.error.clear')), (result as { outcome?: unknown }).outcome === 'not-applied' ? { code: (result as { code?: unknown }).code, outcome: 'not-applied', retryable: false } : {})
   }
 
   // ── Tab state (React-facing) ──────────────────────────────────────────────
@@ -901,7 +953,7 @@ export class WebStore {
     const owner = this.guestLifetimes.get(instanceId)
     const view = this.views.get(instanceId), revision = view?.revision
     if (!guestId || !owner?.active()) {
-      return Promise.resolve({ ok: false, error: uiText('surfing.error.liveTab', { value: instanceId }) } as T)
+      return Promise.resolve({ ok: false, error: uiText('surfing.error.liveTab', { value: instanceId }), code: 'TARGET_NOT_FOUND', outcome: 'not-applied' } as DriverResult as T)
     }
     return owner.run(() => run(guestId)).then(result => read && (!owner.active() || this.views.get(instanceId) !== view || view?.revision !== revision)
       ? { ok: false, error: uiText('surfing.error.liveTab', { value: instanceId }) } as T : result)

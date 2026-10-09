@@ -22,6 +22,7 @@ import { createWebFetcher } from './webFetch'
 import { surfingAgentTools, registerBrowserAgentCommands } from './agentTools'
 import { registerSurfingDetails } from './workspaceDetails'
 import { registerSurfingSurfaces } from './surfaces'
+import { registerSurfingFileCommands } from './fileCommands'
 
 export function register(api: ValleyPluginApi): () => Promise<void> {
   initLocalization(api)
@@ -36,6 +37,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
   const offSurfaces = registerSurfingSurfaces(api, store, ready)
   const fetcher = createWebFetcher(api, store)
   const offCommands = registerWebCommands(api, store, fetcher)
+  const offFileCommands = registerSurfingFileCommands(api)
   const offLinkHandler = api.links.register({
     id: 'browse', label: api.ui.t('manifest.name'), version: '1.0.0', categories: ['website'],
     open: ({ value }) => {
@@ -101,6 +103,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
     offDetails()
     offSurfaces()
     const commandsDrained = offCommands()
+    offFileCommands()
     offFences()
     const drained = disposeStore(api, store)
     disposeStyles()

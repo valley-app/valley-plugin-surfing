@@ -9,7 +9,7 @@ import { initRuntime } from '../src/runtime'
 import { createStore, disposeStore, getStore, toUrl, WebStore } from '../src/store'
 import { clearWebContext, publishWebContext, requestWebNoteFromSelection } from '../src/webContext'
 import { embedPresentation, registerWebFences, resolveProviderUrl } from '../src/embeds'
-import { ensureEmbedProviders, loadEmbedProviders, customizeEmbedProvider, createCustomEmbedProvider, type EmbedProvider } from '../src/embedProviders'
+import { ensureEmbedProviders, loadEmbedProviders, customizeEmbedProvider, createCustomEmbedProvider, type EmbedProvider, type EmbedProviderConfiguration } from '../src/embedProviders'
 import { BUILT_IN_PROVIDERS, embedRenderer, installRuntimeEmbedRenderers } from '../src/embeds/registry'
 import {
   TEXT_SELECTION_ACTION_V1,
@@ -627,6 +627,100 @@ describe('web plugin', () => {
     dispose()
   })
 
+  it('reveals tabs as an execute effect and refuses unknown tabs as not-applied before dispatch', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(mock.api)
+    try {
+      const command = (id: string) => mock.commands.find(entry => entry.id === id || entry.id.endsWith(`:${id}`))!
+      const run = (id: string, input: unknown) => command(id).run(command(id).input!.parse(input), { caller: 'agent' })
+      expect(command('switch')).toMatchObject({ sideEffect: 'execute', recovery: 'non-replayable' })
+      const opened = vi.mocked(mock.api.workspace.openMainTab).mock.calls.length, closed = vi.mocked(mock.api.workspace.closeMainTab).mock.calls.length
+      for (const [id, input] of [['switch', { instanceId: 'missing' }], ['close', { instanceId: 'missing' }], ['browser-close-tab', { instanceId: 'missing' }], ['browser-click', { instanceId: 'missing', ref: 0 }], ['browser-navigate', { instanceId: 'missing', url: 'https://example.test' }]] as const) {
+        await expect(run(id, input), id).rejects.toMatchObject({ code: 'TARGET_NOT_FOUND', outcome: 'not-applied', retryable: false })
+      }
+      expect(mock.api.workspace.openMainTab).toHaveBeenCalledTimes(opened)
+      expect(mock.api.workspace.closeMainTab).toHaveBeenCalledTimes(closed)
+      const result = await mock.api.commands.executeOwn('open', { url: 'example.com' })
+      if (!result.ok) throw new Error(result.error.message)
+      const { instanceId } = result.value as { instanceId: string }
+      expect(await mock.api.commands.executeOwn('switch', { instanceId })).toEqual({ ok: true, value: { instanceId } })
+      expect(mock.api.workspace.openMainTab).toHaveBeenLastCalledWith({ instanceId })
+    } finally { dispose() }
+  })
+
+  it('refuses tab and profile writes after a vault switch as not-applied before any effect', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' }, vault: { path: '/mock/forest', name: 'forest', displayName: 'forest' } })
+    const dispose = register(mock.api)
+    try {
+      const command = (id: string) => mock.commands.find(entry => entry.id === id || entry.id.endsWith(`:${id}`))!
+      const run = (id: string, input: unknown) => command(id).run(command(id).input!.parse(input), { caller: 'agent' })
+      const opened = await mock.api.commands.executeOwn('open', { url: 'example.com' })
+      if (!opened.ok) throw new Error(opened.error.message)
+      const { instanceId } = opened.value as { instanceId: string }
+      await mock.api.commands.executeOwn('list-profiles', {})
+      const store = getStore()!, effects = [vi.spyOn(store, 'deleteProfile'), vi.spyOn(store, 'clearHistory'), vi.spyOn(store, 'closeTab')]
+      mock.emitState({ vault: { path: '/mock/other', name: 'other', displayName: 'other' } })
+      const refusal = { code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false }
+      await expect(run('close', { instanceId }), 'close').rejects.toMatchObject(refusal)
+      await expect(run('delete-profile', { profileId: 'default' }), 'delete-profile').rejects.toMatchObject(refusal)
+      await expect(run('clear-history', { profileId: 'default' }), 'clear-history').rejects.toMatchObject(refusal)
+      for (const effect of effects) expect(effect).not.toHaveBeenCalled()
+    } finally { dispose() }
+  })
+
+  it('refuses stale, protected and missing profile writes as not-applied before any effect', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(mock.api)
+    try {
+      const command = (id: string) => mock.commands.find(entry => entry.id === id || entry.id.endsWith(`:${id}`))!
+      const run = (id: string, input: unknown) => command(id).run(command(id).input!.parse(input), { caller: 'agent' })
+      const refused = (code: string) => ({ code, outcome: 'not-applied', retryable: false })
+      const read = await mock.api.commands.executeOwn('read-profile-settings', { profileId: 'incognito' })
+      if (!read.ok) throw new Error(read.error.message)
+      const store = getStore()!, before = structuredClone(store.getSnapshot().profiles)
+      const effects = [vi.spyOn(store, 'patchProfileSettings'), vi.spyOn(store, 'deleteProfile'), vi.spyOn(store, 'clearHistory')]
+      await expect(run('patch-profile-settings', { profileId: 'default', expectedRevision: '0'.repeat(64), patch: { name: 'Stale' } })).rejects.toMatchObject(refused('REVISION_CONFLICT'))
+      await expect(run('patch-profile-settings', { profileId: 'incognito', expectedRevision: (read.value as { revision: string }).revision, patch: { name: 'Public' } })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+      await expect(run('patch-profile-settings', { profileId: 'missing', expectedRevision: '0'.repeat(64), patch: { name: 'Missing' } })).rejects.toMatchObject(refused('TARGET_NOT_FOUND'))
+      await expect(run('delete-profile', { profileId: 'incognito' })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+      await expect(run('delete-profile', { profileId: 'default' })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+      await expect(run('delete-profile', { profileId: 'missing' })).rejects.toMatchObject(refused('TARGET_NOT_FOUND'))
+      await expect(run('clear-history', { profileId: 'missing' })).rejects.toMatchObject(refused('TARGET_NOT_FOUND'))
+      await expect(run('customize-embed-provider', { id: 'missing' })).rejects.toMatchObject(refused('TARGET_NOT_FOUND'))
+      for (const effect of effects) expect(effect).not.toHaveBeenCalled()
+      expect(store.getSnapshot().profiles).toEqual(before)
+    } finally { dispose() }
+  })
+
+  it('refuses saved-page and history writes whose pre-effect observation fails as not-applied', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(mock.api)
+    try {
+      const command = (id: string) => mock.commands.find(entry => entry.id === id || entry.id.endsWith(`:${id}`))!
+      const run = (id: string, input: unknown) => command(id).run(command(id).input!.parse(input), { caller: 'agent' })
+      const refused = (code: string) => ({ code, outcome: 'not-applied', retryable: false })
+      await mock.api.commands.executeOwn('list-profiles', {})
+      const store = getStore()!, internals = store as unknown as { listLoads: Map<string, unknown>; listRevisions: Map<string, number> }
+      const page = { profileId: 'default', kind: 'favorite', url: 'https://forest.example/' }
+      const backend = vi.mocked(mock.api.backend.call), real = backend.getMockImplementation()!
+      const writes = () => backend.mock.calls.filter(([method]) => method === 'data.saved.set' || method === 'data.history.clear')
+      await store.ensureProfileLoaded('default')
+      internals.listRevisions.delete('saved:default:favorite')
+      await expect(run('save-page', page)).rejects.toMatchObject(refused('REVISION_CONFLICT'))
+      backend.mockImplementation(async (method, input) => {
+        if (method === 'data.saved.list' || method === 'data.history.list') throw new Error('Backend unavailable')
+        return real(method, input)
+      })
+      internals.listLoads.clear()
+      await expect(run('save-page', page)).rejects.toMatchObject({ ...refused('ACTION_UNAVAILABLE'), message: 'Backend unavailable' })
+      await expect(run('remove-page', { ...page, kind: 'reading' })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+      store.reportUrl(store.openTab(''), 'https://forest.example/visit')
+      await expect(run('clear-history', { profileId: 'default' })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+      expect(writes()).toEqual([])
+      expect(store.isFavorite('default', page.url)).toBe(false)
+    } finally { dispose() }
+  })
+
   it('edits every profile setting through its typed owner command and rejects stale revisions', async () => {
     const { api } = createMockValleyApi({ manifest: { id: 'surfing' } })
     const dispose = register(api)
@@ -662,13 +756,81 @@ describe('web plugin', () => {
       expect(results.map(result => result.status).sort()).toEqual(['fulfilled', 'rejected'])
       expect(await mock.api.data.dataset('profiles').get({ id: 'default' })).toMatchObject({ name: 'Forest' })
       expect(await mock.api.data.dataset('profile_adblock').get({ profileId: 'default' })).toMatchObject({ adblockEnabled: false })
-      expect(second.getSnapshot().profileError).toContain('profile changed')
-      expect(() => second.renameProfile('default', 'Stale again')).toThrow('profile changed')
       expect(await mock.api.data.dataset('profiles').get({ id: 'default' })).toMatchObject({ name: 'Forest' })
-      await second.loadConfig()
+      await second.flushProfiles()
+      expect(second.getSnapshot().profileError).toBeUndefined()
+      expect(second.getSnapshot().profiles.find(profile => profile.id === 'default')).toMatchObject({ name: 'Forest', adblockEnabled: false })
       await second.patchProfileSettings('default', { name: 'Reviewed' })
       expect(await mock.api.data.dataset('profiles').get({ id: 'default' })).toMatchObject({ name: 'Reviewed' })
     } finally { await first.dispose(); await second.dispose() }
+  })
+
+  it('recovers profile commands after one failed profile write and refuses without effect while the state is unknown', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(mock.api)
+    try {
+      await getStore()!.loadConfig()
+      const call = vi.mocked(mock.api.backend.call), real = call.getMockImplementation()!
+      call.mockImplementationOnce(async (method, input) => {
+        if (method !== 'data.profiles.set') return real(method, input)
+        throw new Error('Store briefly unavailable')
+      })
+      expect(await mock.api.commands.executeOwn('create-profile', { name: 'Lost' })).toMatchObject({ ok: false, error: { message: 'Store briefly unavailable' } })
+      await getStore()!.flushProfiles()
+      expect(getStore()!.getSnapshot().profileError).toBeUndefined()
+      expect(getStore()!.getSnapshot().profiles.map(profile => profile.name)).not.toContain('Lost')
+      const created = await mock.api.commands.executeOwn('create-profile', { name: 'Fungi' })
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: true, value: { name: 'Fungi' } })
+
+      call.mockImplementation(async (method, input) => {
+        if (method === 'data.profiles.set' || method === 'data.profiles.list') throw new Error('Store unavailable')
+        return real(method, input)
+      })
+      expect(await mock.api.commands.executeOwn('create-profile', { name: 'Lost again' })).toMatchObject({ ok: false })
+      await getStore()!.flushProfiles()
+      expect(getStore()!.getSnapshot().profileError).toContain('profile changed')
+      const writes = call.mock.calls.filter(([method]) => method === 'data.profiles.set').length
+      const createProfile = mock.commands.find(entry => entry.id === 'create-profile' || entry.id.endsWith(':create-profile'))!
+      await expect(createProfile.run(createProfile.input!.parse({ name: 'Refused' }), { caller: 'agent' })).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
+      expect(call.mock.calls.filter(([method]) => method === 'data.profiles.set')).toHaveLength(writes)
+      call.mockImplementation(real)
+      await getStore()!.loadConfig()
+      expect(await mock.api.commands.executeOwn('create-profile', { name: 'Back' })).toMatchObject({ ok: true })
+    } finally { dispose() }
+  })
+
+  it('refuses profile and browser-data commands before any effect as not-applied and keeps later failures unknown', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(mock.api)
+    const command = (id: string) => mock.commands.find(entry => entry.id === id || entry.id.endsWith(`:${id}`))!
+    const run = (id: string, input: unknown): Promise<unknown> => { const entry = command(id); return Promise.resolve(entry.run(entry.input!.parse(input), { caller: 'agent' })) }
+    try {
+      await getStore()!.loadConfig()
+      const call = vi.mocked(mock.api.backend.call)
+      const writes = () => call.mock.calls.filter(([method]) => method === 'data.profiles.set').length
+      const before = writes()
+      await expect(run('create-profile', { name: 'x'.repeat(501) })).rejects.toMatchObject({ code: 'INVALID_INPUT', outcome: 'not-applied', retryable: false })
+      expect(writes()).toBe(before)
+      expect(getStore()!.getSnapshot().profiles.some(profile => profile.name.startsWith('xxx'))).toBe(false)
+
+      const bind = vi.spyOn(mock.api.drivers.browser, 'bindPartition').mockResolvedValueOnce({ ok: false, error: 'Partition unavailable' })
+      const clear = vi.spyOn(mock.api.drivers.browser, 'clearData')
+      await expect(run('clear-browser-data', { profileId: 'default' })).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied', message: 'Partition unavailable' })
+      expect(clear).not.toHaveBeenCalled()
+      bind.mockResolvedValue({ ok: true })
+      clear.mockResolvedValueOnce({ ok: false, error: 'Clear failed' })
+      const unverified = await run('clear-browser-data', { profileId: 'default' }).catch((error: unknown) => error)
+      expect(unverified).toMatchObject({ message: 'Clear failed' })
+      expect((unverified as { outcome?: unknown }).outcome).toBeUndefined()
+      clear.mockResolvedValueOnce({ ok: false, error: 'Partition busy', code: 'ACTION_UNAVAILABLE', outcome: 'not-applied' } as never)
+      await expect(run('clear-browser-data', { profileId: 'default' })).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied' })
+
+      const created = await mock.api.commands.executeOwn('create-profile', { name: 'Fungi' }) as { ok: true; value: { id: string } }
+      expect(created.ok).toBe(true)
+      clear.mockResolvedValueOnce({ ok: false, error: 'Partition busy', code: 'ACTION_UNAVAILABLE', outcome: 'not-applied' } as never)
+      await expect(run('delete-profile', { profileId: created.value.id })).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown' })
+      expect(getStore()!.getSnapshot().profiles.some(profile => profile.id === created.value.id)).toBe(false)
+    } finally { dispose() }
   })
 
   it('exposes embed provider discovery and guarded create/customize actions through commands', async () => {
@@ -683,6 +845,72 @@ describe('web plugin', () => {
       expect(created).toMatchObject({ ok: true, value: { provider: { id: 'custom' } } })
       expect(await mock.api.commands.executeOwn('customize-embed-provider', { id: 'missing' })).toMatchObject({ ok: false })
     } finally { off() }
+  })
+
+  it('undoes and redoes embed provider create/customize routes to the exact prior files and refuses over newer edits', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(mock.api)
+    try {
+      type Revert = { run(): Promise<void>; reapply(): Promise<void> } | null
+      const command = (id: string) => mock.commands.find(entry => entry.id === id || entry.id.endsWith(`:${id}`))!
+      const run = async (id: string, input?: unknown) => await command(id).run(command(id).input ? command(id).input!.parse(input) : input, { caller: 'agent' }) as unknown as { value: { provider: EmbedProvider }; revert: Revert }
+      const read = async (path: string): Promise<Array<[string, string | null]>> => (await Promise.all((await mock.api.data.files.list(path)).map(async entry => entry.isDirectory ? read(`${path}/${entry.name}`) : [[`${path}/${entry.name}`, await mock.api.data.files.readText(`${path}/${entry.name}`)] as [string, string | null]]))).flat()
+      const files = async () => Object.fromEntries(await read('embeds'))
+      const empty = await files()
+      const created = await run('create-embed-provider')
+      const afterCreate = await files()
+      await created.revert!.run()
+      expect(await files()).toEqual(empty)
+      await created.revert!.reapply()
+      expect(await files()).toEqual(afterCreate)
+      const listed = await mock.api.backend.call<EmbedProviderConfiguration>('providers.list', {})
+      await mock.api.backend.call('providers.set', { provider: { ...created.value.provider, displayName: 'Edited later' }, expected: { ...listed.revisions.custom, catalog: listed.catalogRevision } })
+      const edited = await files()
+      await expect(created.revert!.run()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
+      expect(await files()).toEqual(edited)
+      const customized = await run('customize-embed-provider', { id: 'youtube' })
+      const afterCustomize = await files()
+      await customized.revert!.run()
+      expect(await files()).toEqual(edited)
+      await customized.revert!.reapply()
+      expect(await files()).toEqual(afterCustomize)
+      expect((await run('customize-embed-provider', { id: 'youtube' })).revert).toBeNull()
+      expect(await files()).toEqual(afterCustomize)
+    } finally { dispose() }
+  })
+
+  it('offers no embed provider undo when deleting would not restore the exact prior bytes', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(mock.api)
+    try {
+      const command = (id: string) => mock.commands.find(entry => entry.id === id || entry.id.endsWith(`:${id}`))!
+      const run = async (id: string, input?: unknown) => await command(id).run(command(id).input ? command(id).input!.parse(input) : input, { caller: 'agent' }) as unknown as { revert: unknown }
+      await mock.api.data.files.writeTextGuarded('embeds/youtube/renderer.tsx', '', null)
+      expect((await run('customize-embed-provider', { id: 'youtube' })).revert).toBeNull()
+      await mock.api.data.files.writeTextGuarded('embeds/x/provider.json', '', null)
+      expect((await run('customize-embed-provider', { id: 'x' })).revert).toBeNull()
+      const catalog = await mock.api.data.files.readTextBaseline('embeds/catalog.json')
+      await mock.api.data.files.writeTextGuarded('embeds/catalog.json', `${JSON.stringify(JSON.parse(catalog!.content), null, 2)}\n`, catalog!.baseline)
+      expect((await run('create-embed-provider')).revert).toBeNull()
+    } finally { dispose() }
+  })
+
+  it('refuses embed provider undo and redo after a vault switch before reaching any backend', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' }, vault: { path: '/mock/forest', name: 'forest', displayName: 'forest' } })
+    const dispose = register(mock.api)
+    try {
+      const command = mock.commands.find(entry => entry.id === 'create-embed-provider' || entry.id.endsWith(':create-embed-provider'))!
+      const created = await command.run(undefined, { caller: 'agent' }) as unknown as { revert: { run(): Promise<void>; reapply(): Promise<void> } }
+      const call = vi.spyOn(mock.api.backend, 'call')
+      const after = await mock.api.data.files.readText('embeds/custom/provider.json')
+      mock.emitState({ vault: { path: '/mock/other', name: 'other', displayName: 'other' } })
+      const refusal = { code: 'OWNER_CHANGED', outcome: 'not-applied', message: 'The vault changed since this action ran, so it can’t be undone or redone here.' }
+      await expect(created.revert.run()).rejects.toMatchObject(refusal)
+      await expect(created.revert.reapply()).rejects.toMatchObject(refusal)
+      expect(call).not.toHaveBeenCalled()
+      expect(after).toBeTruthy()
+      expect(await mock.api.data.files.readText('embeds/custom/provider.json')).toBe(after)
+    } finally { dispose() }
   })
 
   it('never replaces a provider created by another owner between discovery and file creation', async () => {
@@ -1317,9 +1545,22 @@ describe('clipping document revisions', () => {
     const unregister = registerWebCommands(mock.api, store, createWebFetcher(mock.api, store))
     disposers.push(async () => { await unregister(); await disposeStore(mock.api, store) })
     const clip = (collision = 'overwrite') => mock.api.commands.execute('surfing:clip', { instanceId: 'source', collision })
-    return { ...mock, store, unregister, clip }
+    const runClip = () => { const command = mock.commands.find(entry => entry.id === 'clip' || entry.id.endsWith(':clip'))!; return command.run(command.input!.parse({ instanceId: 'source', collision: 'overwrite' }), { caller: 'agent' }) }
+    return { ...mock, store, unregister, clip, runClip }
   }
   afterEach(async () => { for (const dispose of disposers.splice(0)) await dispose() })
+
+  it('refuses an unreadable source tab in its revision observation as not-applied', async () => {
+    const mock = fixture()
+    const command = mock.commands.find(entry => entry.id === 'clip' || entry.id.endsWith(':clip'))!
+    const observe = () => (command.revision as (input: unknown) => Promise<unknown>)(command.input!.parse({ instanceId: 'source' }))
+    vi.mocked(mock.store.browserReadHtml).mockResolvedValue({ ok: false, error: 'Tab closed', code: 'TARGET_NOT_FOUND', outcome: 'not-applied' } as never)
+    await expect(observe()).rejects.toMatchObject({ code: 'TARGET_NOT_FOUND', outcome: 'not-applied', retryable: false, message: 'Tab closed' })
+    vi.mocked(mock.store.browserReadHtml).mockResolvedValue({ ok: false, error: 'Page unreadable' } as never)
+    await expect(observe()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied', retryable: false })
+    expect(mock.api.vault.writeTextDocumentGuarded).not.toHaveBeenCalled()
+    expect(mock.api.vault.createTextDocumentGuarded).not.toHaveBeenCalled()
+  })
 
   it('uses editor snapshots and alternates exact undo/redo receipts without disk-only reads', async () => {
     const mock = fixture()
@@ -1357,9 +1598,54 @@ describe('clipping document revisions', () => {
       await mock.api.vault.writeFile(path, 'Newer editor draft')
       return write(...args)
     })
-    expect((await mock.clip()).ok).toBe(false)
+    await expect(mock.runClip()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
     expect(await mock.api.vault.readFile(path)).toBe('Newer editor draft')
     expect(mock.busUndo).toHaveLength(0)
+  })
+
+  it('reports refusals before any write as not-applied and an unverified write as unknown', async () => {
+    const mock = fixture()
+    vi.mocked(mock.store.browserReadHtml).mockResolvedValueOnce({ ok: true, data: { url: 'https://example.test/empty', title: 'Empty', html: '<html><body></body></html>' } })
+    await expect(mock.runClip()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied' })
+    vi.mocked(mock.store.browserReadHtml).mockResolvedValueOnce({ ok: false, error: 'Page unavailable' })
+    await expect(mock.runClip()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied' })
+    expect(mock.api.vault.writeTextDocumentGuarded).not.toHaveBeenCalled()
+    vi.mocked(mock.api.vault.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'stale' })
+    await expect(mock.runClip()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
+    vi.mocked(mock.api.vault.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
+    await expect(mock.runClip()).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown' })
+    expect(await mock.api.vault.readFile(path)).toBe(prior)
+    expect(mock.busUndo).toHaveLength(0)
+  })
+
+  it('reports clip undo/redo refusals before any vault effect as not-applied and unverified replays as unknown', async () => {
+    const mock = fixture()
+    await mock.clip()
+    const write = vi.mocked(mock.api.vault.writeTextDocumentGuarded)
+    write.mockResolvedValueOnce({ ok: false, reason: 'stale' })
+    await expect(mock.busUndo[0].undo()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied', retryable: false })
+    await expect(mock.busUndo[0].undo()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied', retryable: false })
+    await expect(mock.busUndo[0].redo!()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied', retryable: false })
+    expect(write).toHaveBeenCalledTimes(2)
+
+    const unverified = fixture()
+    await unverified.clip()
+    vi.mocked(unverified.api.vault.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
+    await expect(unverified.busUndo[0].undo()).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown' })
+
+    const created = fixture(false)
+    await created.clip()
+    vi.mocked(created.api.vault.trashTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'conflict', current: null })
+    await expect(created.busUndo[0].undo()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
+    const recreated = fixture(false)
+    await recreated.clip()
+    await recreated.busUndo[0].undo()
+    vi.mocked(recreated.api.vault.createTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'conflict' })
+    await expect(recreated.busUndo[0].redo!()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
+    const lost = fixture(false)
+    await lost.clip()
+    vi.mocked(lost.api.vault.trashTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
+    await expect(lost.busUndo[0].undo()).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown' })
   })
 
   it.each(['undo', 'redo'] as const)('rejects %s after an edit/revert ABA without renewing authority', async direction => {

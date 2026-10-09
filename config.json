@@ -370,7 +370,7 @@
         "label": "Allow browsing",
         "labelKey": "auto.135f8a7fe1ef",
         "version": 2,
-        "description": "Let the assistant browse autonomously \u2014 navigate, click, type, open tabs and fetch URLs without confirming each step.",
+        "description": "Let the assistant browse autonomously — navigate, click, type, open tabs and fetch URLs without confirming each step.",
         "descriptionKey": "surfing.guard.allow-browsing",
         "entries": {
           "tools": {
@@ -2256,12 +2256,17 @@
                 "catalogRevision": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "restorable": {
+                  "type": "boolean",
+                  "description": "True only when deleting this provider at the returned revisions restores the exact bytes from before this save: neither provider.json nor renderer.tsx existed (not even empty) and removing its catalog entry rebuilds the prior catalog.json, or its absence, byte for byte. Callers offer no undo when false."
                 }
               },
               "required": [
                 "provider",
                 "revisions",
-                "catalogRevision"
+                "catalogRevision",
+                "restorable"
               ],
               "additionalProperties": false,
               "$schema": "http://json-schema.org/draft-07/schema#"
@@ -2509,12 +2514,17 @@
                 "catalogRevision": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "restorable": {
+                  "type": "boolean",
+                  "description": "True only when deleting this provider at the returned revisions restores the exact bytes from before this save: neither provider.json nor renderer.tsx existed (not even empty) and removing its catalog entry rebuilds the prior catalog.json, or its absence, byte for byte. Callers offer no undo when false."
                 }
               },
               "required": [
                 "provider",
                 "revisions",
-                "catalogRevision"
+                "catalogRevision",
+                "restorable"
               ],
               "additionalProperties": false,
               "$schema": "http://json-schema.org/draft-07/schema#"
@@ -2916,10 +2926,121 @@
                 "catalogRevision": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "restorable": {
+                  "type": "boolean",
+                  "description": "True only when deleting this provider at the returned revisions restores the exact bytes from before this save: neither provider.json nor renderer.tsx existed (not even empty) and removing its catalog entry rebuilds the prior catalog.json, or its absence, byte for byte. Callers offer no undo when false."
                 }
               },
               "required": [
                 "provider",
+                "revisions",
+                "catalogRevision",
+                "restorable"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            }
+          }
+        }
+      },
+      {
+        "id": "command.providers.delete",
+        "version": "1.0.0",
+        "method": "command.providers.delete",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "command": {
+            "id": "providers.delete",
+            "description": "Delete one custom or customized embed provider’s editable definition and renderer files using its observed document and catalog revisions, and remove its catalog entry. The catalog and files return to the exact bytes they had before that provider was created or customized only when that save reported restorable true and nothing changed since. Built-in providers without files are refused.",
+            "effect": "write",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "renderer": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "catalog": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "renderer",
+                    "catalog"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "expected"
+              ],
+              "additionalProperties": false,
+              "$schema": "http://json-schema.org/draft-07/schema#"
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                },
+                "directory": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                },
+                "revisions": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "renderer": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "renderer"
+                  ],
+                  "additionalProperties": false
+                },
+                "catalogRevision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "id",
+                "directory",
                 "revisions",
                 "catalogRevision"
               ],
@@ -2928,7 +3049,1235 @@
             }
           }
         }
+      },
+      {
+        "id": "workflow.provider",
+        "version": "1.0.0",
+        "method": "workflow.execute",
+        "operation": true,
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "metadata": {
+          "workflow": {
+            "providerId": "surfing",
+            "providerVersion": "1.0.0",
+            "nodes": [
+              {
+                "id": "fetch.url",
+                "type": "action",
+                "version": "1.0.0",
+                "displayName": "Fetch an HTTP(S) URL without browser cookies; returns bounded encoded content or an explicit fetch error",
+                "description": "Fetch an HTTP(S) URL without browser cookies; returns bounded encoded content or an explicit fetch error. Uses the owning plugin backend and its existing grants and revision checks.",
+                "effect": "read",
+                "idempotent": true,
+                "executionMode": "item",
+                "inputs": [
+                  {
+                    "id": "input",
+                    "label": "Input",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "output",
+                    "label": "Result",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "url": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "integer",
+                                  "minimum": 100,
+                                  "maximum": 599
+                                },
+                                "contentType": {
+                                  "type": "string"
+                                },
+                                "bytes": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "bodyBase64": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "url",
+                                "status",
+                                "contentType",
+                                "bytes",
+                                "bodyBase64"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "error": {
+                                  "enum": [
+                                    "url",
+                                    "blocked",
+                                    "timeout",
+                                    "tooLarge",
+                                    "redirect",
+                                    "network"
+                                  ]
+                                },
+                                "message": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "error"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "value"
+                      ],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    }
+                  }
+                ],
+                "parameterSchema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192,
+                      "title": "url",
+                      "ui": {
+                        "control": "text"
+                      }
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "integer",
+                              "minimum": 100,
+                              "maximum": 599
+                            },
+                            "contentType": {
+                              "type": "string"
+                            },
+                            "bytes": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "bodyBase64": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "url",
+                            "status",
+                            "contentType",
+                            "bytes",
+                            "bodyBase64"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "error": {
+                              "enum": [
+                                "url",
+                                "blocked",
+                                "timeout",
+                                "tooLarge",
+                                "redirect",
+                                "network"
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "error"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "readiness": {
+                  "state": "Available"
+                }
+              },
+              {
+                "id": "profiles.list",
+                "type": "action",
+                "version": "1.0.0",
+                "displayName": "List browser profiles and their ad-block settings with observed revisions",
+                "description": "List browser profiles and their ad-block settings with observed revisions. Incognito data stays in memory.. Uses the owning plugin backend and its existing grants and revision checks.",
+                "effect": "read",
+                "idempotent": true,
+                "executionMode": "item",
+                "inputs": [
+                  {
+                    "id": "input",
+                    "label": "Input",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "output",
+                    "label": "Result",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "profiles": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 500
+                              },
+                              "createdAt": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "private": {
+                                "type": "boolean"
+                              },
+                              "icon": {
+                                "type": "string",
+                                "maxLength": 128
+                              },
+                              "hidden": {
+                                "type": "boolean"
+                              },
+                              "adblockEnabled": {
+                                "type": "boolean"
+                              },
+                              "adblockRules": {
+                                "type": "string",
+                                "maxLength": 65536
+                              },
+                              "adblockFrequency": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 3650
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "createdAt",
+                              "adblockEnabled",
+                              "adblockRules",
+                              "adblockFrequency"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "revisions": {
+                          "type": "object",
+                          "properties": {
+                            "profiles": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "adblock": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "profiles",
+                            "adblock"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "browserCleanupDeferred": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          }
+                        }
+                      },
+                      "required": [
+                        "profiles",
+                        "revisions",
+                        "browserCleanupDeferred"
+                      ],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    },
+                    "collection": {
+                      "selector": "$.profiles"
+                    }
+                  }
+                ],
+                "parameterSchema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 500
+                          },
+                          "createdAt": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "private": {
+                            "type": "boolean"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "maxLength": 128
+                          },
+                          "hidden": {
+                            "type": "boolean"
+                          },
+                          "adblockEnabled": {
+                            "type": "boolean"
+                          },
+                          "adblockRules": {
+                            "type": "string",
+                            "maxLength": 65536
+                          },
+                          "adblockFrequency": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 3650
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "createdAt",
+                          "adblockEnabled",
+                          "adblockRules",
+                          "adblockFrequency"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "revisions": {
+                      "type": "object",
+                      "properties": {
+                        "profiles": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "adblock": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "profiles",
+                        "adblock"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "browserCleanupDeferred": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      }
+                    }
+                  },
+                  "required": [
+                    "profiles",
+                    "revisions",
+                    "browserCleanupDeferred"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "readiness": {
+                  "state": "Available"
+                }
+              },
+              {
+                "id": "saved.list",
+                "type": "action",
+                "version": "1.0.0",
+                "displayName": "Read a profile favorite or reading list in its saved order with its revision",
+                "description": "Read a profile favorite or reading list in its saved order with its revision.. Uses the owning plugin backend and its existing grants and revision checks.",
+                "effect": "read",
+                "idempotent": true,
+                "executionMode": "item",
+                "inputs": [
+                  {
+                    "id": "input",
+                    "label": "Input",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "output",
+                    "label": "Result",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "pages": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "url": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192
+                              },
+                              "title": {
+                                "type": "string",
+                                "maxLength": 8192
+                              },
+                              "ts": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "url",
+                              "title",
+                              "ts"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "pages",
+                        "revision"
+                      ],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    },
+                    "collection": {
+                      "selector": "$.pages"
+                    }
+                  }
+                ],
+                "parameterSchema": {
+                  "type": "object",
+                  "properties": {
+                    "profileId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "title": "profile ID",
+                      "ui": {
+                        "control": "text"
+                      }
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "favorite",
+                        "reading"
+                      ],
+                      "title": "kind"
+                    }
+                  },
+                  "required": [
+                    "profileId",
+                    "kind"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "url": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8192
+                          },
+                          "title": {
+                            "type": "string",
+                            "maxLength": 8192
+                          },
+                          "ts": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "url",
+                          "title",
+                          "ts"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "pages",
+                    "revision"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "readiness": {
+                  "state": "Available"
+                }
+              },
+              {
+                "id": "history.list",
+                "type": "action",
+                "version": "1.0.0",
+                "displayName": "Read browser history newest first with its observed revision",
+                "description": "Read browser history newest first with its observed revision. Private profile history is always empty.. Uses the owning plugin backend and its existing grants and revision checks.",
+                "effect": "read",
+                "idempotent": true,
+                "executionMode": "item",
+                "inputs": [
+                  {
+                    "id": "input",
+                    "label": "Input",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "output",
+                    "label": "Result",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "pages": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "url": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 8192
+                              },
+                              "title": {
+                                "type": "string",
+                                "maxLength": 8192
+                              },
+                              "ts": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "url",
+                              "title",
+                              "ts"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "revision": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "pages",
+                        "revision"
+                      ],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    },
+                    "collection": {
+                      "selector": "$.pages"
+                    }
+                  }
+                ],
+                "parameterSchema": {
+                  "type": "object",
+                  "properties": {
+                    "profileId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "title": "profile ID",
+                      "ui": {
+                        "control": "text"
+                      }
+                    }
+                  },
+                  "required": [
+                    "profileId"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "url": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 8192
+                          },
+                          "title": {
+                            "type": "string",
+                            "maxLength": 8192
+                          },
+                          "ts": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "url",
+                          "title",
+                          "ts"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "pages",
+                    "revision"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "readiness": {
+                  "state": "Available"
+                }
+              },
+              {
+                "id": "providers.list",
+                "type": "action",
+                "version": "1.0.0",
+                "displayName": "List built-in and customized embed-provider definitions with document and catalog revisions",
+                "description": "List built-in and customized embed-provider definitions with document and catalog revisions. Renderer code is never executed by this backend operation.. Uses the owning plugin backend and its existing grants and revision checks.",
+                "effect": "read",
+                "idempotent": true,
+                "executionMode": "item",
+                "inputs": [
+                  {
+                    "id": "input",
+                    "label": "Input",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                ],
+                "outputs": [
+                  {
+                    "id": "output",
+                    "label": "Result",
+                    "dataType": "json",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "providers": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "schemaVersion": {
+                                "type": "number",
+                                "const": 1
+                              },
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                              },
+                              "displayName": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 500
+                              },
+                              "language": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                              },
+                              "template": {
+                                "type": "string",
+                                "maxLength": 8192
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "youtube",
+                                  "x",
+                                  "generic"
+                                ]
+                              },
+                              "valueParser": {
+                                "type": "string",
+                                "enum": [
+                                  "youtube-video-id",
+                                  "x-post-id",
+                                  "identity"
+                                ]
+                              },
+                              "presentation": {
+                                "type": "object",
+                                "properties": {
+                                  "initialHeight": {
+                                    "type": "number",
+                                    "minimum": 1,
+                                    "maximum": 2000
+                                  },
+                                  "autoSize": {
+                                    "type": "boolean"
+                                  },
+                                  "fullWidth": {
+                                    "type": "boolean"
+                                  },
+                                  "minHeight": {
+                                    "type": "number",
+                                    "minimum": 1,
+                                    "maximum": 2000
+                                  },
+                                  "maxHeight": {
+                                    "type": "number",
+                                    "minimum": 1,
+                                    "maximum": 2000
+                                  },
+                                  "aspectRatio": {
+                                    "type": "string",
+                                    "maxLength": 128
+                                  },
+                                  "httpReferrer": {
+                                    "type": "string",
+                                    "maxLength": 8192
+                                  },
+                                  "fitWidth": {
+                                    "type": "object",
+                                    "properties": {
+                                      "naturalWidth": {
+                                        "type": "number",
+                                        "minimum": 1,
+                                        "maximum": 2000
+                                      },
+                                      "maxScale": {
+                                        "type": "number",
+                                        "minimum": 1,
+                                        "maximum": 4
+                                      }
+                                    },
+                                    "required": [
+                                      "naturalWidth",
+                                      "maxScale"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "required": [
+                                  "initialHeight",
+                                  "autoSize",
+                                  "fullWidth"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "theme": {
+                                "type": "object",
+                                "properties": {
+                                  "queryParameter": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                                  },
+                                  "values": {
+                                    "type": "object",
+                                    "properties": {
+                                      "light": {
+                                        "type": "string"
+                                      },
+                                      "dark": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "light",
+                                      "dark"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "required": [
+                                  "queryParameter",
+                                  "values"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "order": {
+                                "type": "number"
+                              },
+                              "directory": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                              }
+                            },
+                            "required": [
+                              "schemaVersion",
+                              "id",
+                              "displayName",
+                              "language",
+                              "template",
+                              "kind",
+                              "valueParser",
+                              "presentation",
+                              "order",
+                              "directory"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "customized": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "issues": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "message"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "revisions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "provider": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "renderer": {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "provider",
+                              "renderer"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "catalogRevision": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "providers",
+                        "customized",
+                        "issues",
+                        "revisions",
+                        "catalogRevision"
+                      ],
+                      "additionalProperties": false,
+                      "$schema": "http://json-schema.org/draft-07/schema#"
+                    },
+                    "collection": {
+                      "selector": "$.providers"
+                    }
+                  }
+                ],
+                "parameterSchema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "providers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "schemaVersion": {
+                            "type": "number",
+                            "const": 1
+                          },
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                          },
+                          "displayName": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 500
+                          },
+                          "language": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                          },
+                          "template": {
+                            "type": "string",
+                            "maxLength": 8192
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "youtube",
+                              "x",
+                              "generic"
+                            ]
+                          },
+                          "valueParser": {
+                            "type": "string",
+                            "enum": [
+                              "youtube-video-id",
+                              "x-post-id",
+                              "identity"
+                            ]
+                          },
+                          "presentation": {
+                            "type": "object",
+                            "properties": {
+                              "initialHeight": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 2000
+                              },
+                              "autoSize": {
+                                "type": "boolean"
+                              },
+                              "fullWidth": {
+                                "type": "boolean"
+                              },
+                              "minHeight": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 2000
+                              },
+                              "maxHeight": {
+                                "type": "number",
+                                "minimum": 1,
+                                "maximum": 2000
+                              },
+                              "aspectRatio": {
+                                "type": "string",
+                                "maxLength": 128
+                              },
+                              "httpReferrer": {
+                                "type": "string",
+                                "maxLength": 8192
+                              },
+                              "fitWidth": {
+                                "type": "object",
+                                "properties": {
+                                  "naturalWidth": {
+                                    "type": "number",
+                                    "minimum": 1,
+                                    "maximum": 2000
+                                  },
+                                  "maxScale": {
+                                    "type": "number",
+                                    "minimum": 1,
+                                    "maximum": 4
+                                  }
+                                },
+                                "required": [
+                                  "naturalWidth",
+                                  "maxScale"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "initialHeight",
+                              "autoSize",
+                              "fullWidth"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "theme": {
+                            "type": "object",
+                            "properties": {
+                              "queryParameter": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128,
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                              },
+                              "values": {
+                                "type": "object",
+                                "properties": {
+                                  "light": {
+                                    "type": "string"
+                                  },
+                                  "dark": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "light",
+                                  "dark"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "queryParameter",
+                              "values"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "order": {
+                            "type": "number"
+                          },
+                          "directory": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                          }
+                        },
+                        "required": [
+                          "schemaVersion",
+                          "id",
+                          "displayName",
+                          "language",
+                          "template",
+                          "kind",
+                          "valueParser",
+                          "presentation",
+                          "order",
+                          "directory"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "customized": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "message"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "revisions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "provider": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "renderer": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "renderer"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "catalogRevision": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "providers",
+                    "customized",
+                    "issues",
+                    "revisions",
+                    "catalogRevision"
+                  ],
+                  "additionalProperties": false,
+                  "$schema": "http://json-schema.org/draft-07/schema#"
+                },
+                "readiness": {
+                  "state": "Available"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "workflow.catalog",
+        "version": "1.0.0",
+        "method": "workflow.catalog",
+        "request": {
+          "type": "unknown"
+        },
+        "response": {
+          "type": "unknown"
+        },
+        "operation": true
       }
+    ],
+    "largeDataOperations": [
+      "workflow.execute"
     ]
   },
   "permissions": {
@@ -2950,7 +4299,8 @@
       "metadata": [
         "plugins/data/surfing"
       ]
-    }
+    },
+    "largeData": true
   },
   "settingsSchema": {
     "fields": [

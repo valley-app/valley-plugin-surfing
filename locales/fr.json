@@ -171,6 +171,7 @@
   "surfing.error.storage": "Impossible d’accéder au stockage du navigateur.",
   "surfing.error.clear": "Impossible d’effacer les données du navigateur. Réessayez.",
   "surfing.error.profile": "Ce profil de navigateur n’existe plus. Choisissez-en un autre.",
+  "surfing.error.vaultChanged": "Le coffre-fort a changé depuis cette action ; elle ne peut pas être annulée ni rétablie ici.",
   "surfing.error.liveTab": "Aucun onglet actif « {{value}} ».",
   "surfing.error.url": "Utilisez une URL de site en http ou https.",
   "surfing.error.closedTab": "Cet onglet est fermé. Ouvrez à nouveau la page.",

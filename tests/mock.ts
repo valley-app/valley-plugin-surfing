@@ -1,8 +1,10 @@
 import { createMockValleyApi as createApi } from '@valley/plugin-testkit'
+import Ajv from 'ajv'
 import { createProviderOwner } from '../src/backend/providers'
 import type { PluginBackendOperationContext } from '@valley/plugin-sdk'
 import { createDataOwner } from '../src/backend/data'
 import { vi } from 'vitest'
+import { pluginDataDirectoryPath } from '@valley/plugin-sdk/paths'
 import type { ValleyPluginApi } from '@valley/plugin-sdk'
 
 type PluginStorageLocation = Parameters<PluginBackendOperationContext['api']['storage']['readDocument']>[0]
@@ -14,6 +16,18 @@ type MediaExecutor = Parameters<ValleyPluginApi['playback']['createExternalPlaye
 
 export function createMockValleyApi(options: Parameters<typeof createApi>[0] = {}) {
   const mock = createApi({ ...options, manifest: { id: 'surfing', ...options.manifest } })
+  const register = mock.api.commands.register.bind(mock.api.commands)
+  const compiler = new Ajv({ strict: true })
+  mock.api.commands.register = command => {
+    const outputSchema = (command as typeof command & { outputSchema?: Record<string, unknown> }).outputSchema
+    const validate = outputSchema ? compiler.compile(outputSchema) : null
+    return register({ ...command, run: async (input, context) => {
+      const result = await command.run(input, context)
+      const value = command.sideEffect === 'write' && result && typeof result === 'object' && 'value' in result ? result.value : result ?? null
+      if (validate && !validate(value)) throw new Error(`Invalid ${command.id} result: ${JSON.stringify(validate.errors)}`)
+      return result
+    } })
+  }
   mock.api.ui.ContentLoader = ({ label }) => mock.api.React.createElement('span', { role: 'status', 'aria-label': label }, label)
   const documents = new Map<string, { content: string; revision: number }>()
   let pending = Promise.resolve()
@@ -31,6 +45,7 @@ export function createMockValleyApi(options: Parameters<typeof createApi>[0] = {
         entries.forEach((entry, index) => { if (entry.expectedRevision !== current[index].revision) throw Object.assign(new Error('Document changed'), { code: 'REVISION_CONFLICT' }) })
         for (const entry of entries) {
           const path = entry.location.path ?? '', baseline = await mock.api.data.files.readTextBaseline(path)
+          if (entry.content === null) { if (baseline) await mock.api.drivers.files.deleteFile(`${pluginDataDirectoryPath('surfing')}/${path}`); continue }
           const result = await mock.api.data.files.writeTextGuarded(path, entry.content ?? '', baseline?.baseline ?? null)
           if (!result.ok) throw Object.assign(new Error('Document changed'), { code: 'REVISION_CONFLICT' })
         }
@@ -38,6 +53,10 @@ export function createMockValleyApi(options: Parameters<typeof createApi>[0] = {
       })
       pending = operation.then(() => {}, () => {})
       return operation
+    }),
+    list: vi.fn(async (location: PluginStorageLocation) => (await mock.api.data.files.list(location.path ?? '')).map(entry => ({ name: entry.name, kind: entry.isDirectory ? 'directory' : 'file', size: 0, mtimeMs: 0 }))),
+    remove: vi.fn(async (location: PluginStorageLocation, options?: { recursive?: boolean }) => {
+      if (!options?.recursive && (await mock.api.data.files.list(location.path ?? '')).length) throw Object.assign(new Error('Directory is not empty'), { code: 'ENOTEMPTY' })
     })
   } as unknown as PluginBackendOperationContext['api']['storage']
   const rpc = { emit: () => {} }, data = createDataOwner({ data: mock.api.data, rpc }), providers = createProviderOwner({ data: mock.api.data, rpc, storage })

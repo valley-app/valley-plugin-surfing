@@ -69,6 +69,59 @@ describe('owned background browser data', () => {
     await expect(call('profiles.delete', { id: 'default', expected: initial.revisions })).rejects.toThrow('cannot be deleted')
   })
 
+  it('refuses invalid, protected and missing targets as not-applied before any mutation', async () => {
+    const { call, api, emit } = fixture(), initial = await call('profiles.list', {}), page = { url: 'https://forest.example', title: 'Forest', ts: 1 }
+    await call('history.append', { profileId: 'default', page, id: 'visit-1' })
+    const transaction = vi.spyOn(api.data, 'transaction'), refused = (code: string) => ({ code, outcome: 'not-applied', retryable: false })
+    await expect(call('profiles.delete', { id: 'missing', expected: initial.revisions })).rejects.toMatchObject(refused('TARGET_NOT_FOUND'))
+    await expect(call('profiles.delete', { id: 'default', expected: initial.revisions })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+    await expect(call('profiles.delete', { id: 'incognito', expected: initial.revisions })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+    await expect(call('profiles.set', { profiles: initial.profiles.map(value => ({ ...value, private: true })), expected: initial.revisions })).rejects.toMatchObject(refused('INVALID_INPUT'))
+    await expect(call('profiles.create', { name: '   ', expected: initial.revisions })).rejects.toMatchObject(refused('INVALID_INPUT'))
+    await expect(call('profiles.patch', { id: 'default', patch: { hidden: true }, expected: initial.revisions })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+    await expect(call('saved.set', { profileId: 'incognito', kind: 'favorite', pages: [], expectedRevision: 0 })).rejects.toMatchObject(refused('ACTION_UNAVAILABLE'))
+    await expect(call('saved.set', { profileId: 'default', kind: 'favorite', pages: [page, page], expectedRevision: 0 })).rejects.toMatchObject(refused('INVALID_INPUT'))
+    await expect(call('saved.list', { profileId: 'missing', kind: 'favorite' })).rejects.toMatchObject(refused('TARGET_NOT_FOUND'))
+    await expect(call('history.append', { profileId: 'default', page: { ...page, url: 'file:///forest' }, id: 'visit-2' })).rejects.toMatchObject(refused('INVALID_INPUT'))
+    await expect(call('history.append', { profileId: 'default', page: { ...page, title: 'Duplicate' }, id: 'visit-1' })).rejects.toMatchObject(refused('INVALID_INPUT'))
+    expect(transaction).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
+    expect((await call<PagesSnapshot>('history.list', { profileId: 'default' })).pages).toEqual([page])
+  })
+
+  it('deletes profiles and clears history without the empty record writes the store rejects', async () => {
+    const { call, api } = fixture(), transaction = api.data.transaction.bind(api.data)
+    vi.spyOn(api.data, 'transaction').mockImplementation(async (operations, options) => {
+      if (operations.some(operation => (operation.operation === 'insert' || operation.operation === 'upsert') && Array.isArray(operation.values) && !operation.values.length)) throw Object.assign(new Error('Invalid records'), { code: 'validation-failed', retryable: false, outcomeUnknown: false })
+      return transaction(operations, options)
+    })
+    const page = { url: 'https://forest.example', title: 'Forest', ts: 1 }
+    expect(await call<PagesSnapshot>('history.clear', { profileId: 'default', expectedRevision: (await call<PagesSnapshot>('history.list', { profileId: 'default' })).revision })).toMatchObject({ pages: [] })
+    await call('history.append', { profileId: 'default', page, id: 'visit-1' })
+    const cleared = await call<PagesSnapshot>('history.clear', { profileId: 'default', expectedRevision: (await call<PagesSnapshot>('history.list', { profileId: 'default' })).revision })
+    expect(cleared.pages).toEqual([])
+    expect((await api.data.dataset('visits').query({})).rows).toEqual([])
+    const initial = await call('profiles.list', {}), created = await call('profiles.create', { name: 'Fixture', expected: initial.revisions })
+    const id = created.profiles.find(value => value.name === 'Fixture')!.id
+    await call('history.append', { profileId: id, page, id: 'visit-2' })
+    const deleted = await call('profiles.delete', { id, expected: (await call('profiles.list', {})).revisions })
+    expect(deleted.browserCleanupDeferred).toEqual([id])
+    expect((await call('profiles.list', {})).profiles.map(value => value.id)).toEqual(initial.profiles.map(value => value.id))
+    expect((await api.data.dataset('visits').query({})).rows).toEqual([])
+  })
+
+  it('reports store refusals that rolled back as not-applied and keeps unknown store outcomes unknown', async () => {
+    const { call, api } = fixture(), initial = await call('profiles.list', {}), transaction = vi.spyOn(api.data, 'transaction')
+    transaction.mockRejectedValueOnce(Object.assign(new Error('Dataset revision changed'), { code: 'conflict', retryable: false, outcomeUnknown: false }))
+    await expect(call('profiles.patch', { id: 'default', patch: { name: 'Raced' }, expected: initial.revisions })).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied', retryable: false })
+    transaction.mockRejectedValueOnce(Object.assign(new Error('Invalid records'), { code: 'validation-failed', retryable: false, outcomeUnknown: false }))
+    await expect(call('history.append', { profileId: 'default', page: { url: 'https://forest.example', title: 'Forest', ts: 1 }, id: 'visit-1' })).rejects.toMatchObject({ code: 'validation-failed', outcome: 'not-applied' })
+    transaction.mockRejectedValueOnce(Object.assign(new Error('Store closed during commit'), { code: 'store-unavailable', retryable: false, outcomeUnknown: true }))
+    const unknown = await call('profiles.patch', { id: 'default', patch: { name: 'Unknown' }, expected: initial.revisions }).catch((error: unknown) => error)
+    expect(unknown).toMatchObject({ code: 'store-unavailable', outcomeUnknown: true })
+    expect(unknown).not.toHaveProperty('outcome')
+  })
+
   it('cancels after owner reads before a durable mutation', async () => {
     const { call, api, controller, emit } = fixture(), initial = await call('profiles.list', {})
     const dataset = api.data.dataset.bind(api.data), transaction = vi.spyOn(api.data, 'transaction')

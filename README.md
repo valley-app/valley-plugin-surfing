@@ -22,6 +22,8 @@ Valley ships this core plugin as a verified release artifact in its application 
 
 Use one fence name: `surfing` for a website, `surfing youtube` for a YouTube embed, and `surfing X` for an X post. Put the URL in the block body or after the provider selector. Custom providers use `surfing <provider language>`.
 
+The `providers.delete` command removes a custom provider's files, or a built-in provider's customization, with the revisions from `providers.list`. It also removes that provider's catalog entry, so deleting a provider right after `providers.create` or `providers.customize` restores the earlier files exactly.
+
 Settings → Markdown → Code blocks has one Surfing name input. Renaming it changes the prefix for every Surfing example. Existing notes are not rewritten; update their fences to the selected prefix and provider selector.
 
 ````markdown
@@ -64,3 +66,9 @@ npm run check
 The check validates types and package boundaries, runs the package tests, and rebuilds `runtime/`. It requires no Valley source checkout. Keep the rebuilt runtime, locale files, dependency lock, and vendored tools with each release. Increment the package and manifest versions together.
 
 Valley release maintainers explicitly import the compiled artifact into the application’s `plugins.lock.json`; building Valley does not build or read this repository. All privileged work uses declared SDK capabilities, authenticated IPC, and explicit grants. Disabling or unloading the plugin releases its subscriptions and resources.
+
+## Workflow integration
+
+The backend explicitly registers its supported blocks through `registerWorkflowContribution`. Workflow calls the owning operations with their original authentication, cancellation, grants, revisions, and receipts. The catalogue publishes Draft-07 parameter and port contracts; credential administration and approval bypasses are excluded. Workflow availability is configured separately in Workflow → Plugins. Existing account, connection, and profile settings remain owned by this plugin.
+
+Workflow output collections are explicit: `profiles.list` → `$.profiles`, `saved.list` → `$.pages`, `history.list` → `$.pages`, `providers.list` → `$.providers`. Selectors are relative to each execution item’s `json`. Profiles and providers deliberately select their primary records; cleanup IDs, customization IDs, issues and revisions remain metadata. Fetched page content remains one result.

@@ -89,6 +89,13 @@ describe('Surfing URL fetcher', () => {
     expect(store.getSnapshot().agentActivity[0]).toMatchObject({ mode: 'rendered', state: 'done', instanceId: 'web-agent' })
   })
 
+  it('refuses an unusable rendered URL as not-applied before opening a tab', async () => {
+    const { store, fetcher } = setup()
+    const openAgentTab = vi.spyOn(store, 'openAgentTab')
+    await expect(fetcher.fetchRendered({ url: 'ftp://forest.example/' })).rejects.toMatchObject({ code: 'url', outcome: 'not-applied', retryable: false })
+    expect(openAgentTab).not.toHaveBeenCalled()
+  })
+
   it('waits for the guest load event, a timeout or cancellation', async () => {
     const { store, mock } = setup()
     store.ensureTab('web-1')

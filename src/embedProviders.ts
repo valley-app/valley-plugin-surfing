@@ -90,14 +90,41 @@ export async function ensureEmbedProviders(): Promise<EmbedProviderConfiguration
   return loadEmbedProviders()
 }
 
-export async function customizeEmbedProvider(provider: EmbedProvider): Promise<void> {
+export interface SavedEmbedProvider {
+  provider: EmbedProvider
+  revisions: { provider: number; renderer: number }
+  catalogRevision: number
+  /** True only when deleting the provider at these revisions restores the exact bytes it had before this save. */
+  restorable: boolean
+}
+
+export async function customizeEmbedProvider(provider: EmbedProvider): Promise<SavedEmbedProvider> {
   const snapshot = await api.backend.call<EmbedProviderConfiguration>('providers.list', {})
-  await api.backend.call('providers.customize', { id: provider.id, expected: { ...snapshot.revisions[provider.id] ?? { provider: 0, renderer: 0 }, catalog: snapshot.catalogRevision } })
+  return api.backend.call<SavedEmbedProvider>('providers.customize', { id: provider.id, expected: { ...snapshot.revisions[provider.id] ?? { provider: 0, renderer: 0 }, catalog: snapshot.catalogRevision } })
+}
+
+export async function createCustomEmbedProviderSaved(): Promise<SavedEmbedProvider> {
+  return api.backend.call<SavedEmbedProvider>('providers.create', {})
 }
 
 export async function createCustomEmbedProvider(): Promise<EmbedProvider> {
-  const result = await api.backend.call<{ provider: EmbedProvider }>('providers.create', {})
-  return result.provider
+  return (await createCustomEmbedProviderSaved()).provider
+}
+
+type ProviderRevisions = Pick<SavedEmbedProvider, 'revisions' | 'catalogRevision'>
+
+/** Undo deletes the files the forward write created, guarded by the revisions it produced; redo writes them again. Offered only for a restorable save. */
+export function embedProviderFilesRevert(label: string, saved: SavedEmbedProvider, recreate: (expected: { provider: number; renderer: number; catalog: number }) => Promise<SavedEmbedProvider>) {
+  let current: ProviderRevisions = saved, restorable = saved.restorable
+  const expected = () => ({ ...current.revisions, catalog: current.catalogRevision })
+  return {
+    label,
+    run: async () => {
+      if (!restorable) throw Object.assign(new Error('Deleting this embed provider would not restore its exact prior files'), { code: 'ACTION_UNAVAILABLE', outcome: 'not-applied', retryable: false })
+      current = await api.backend.call<ProviderRevisions>('providers.delete', { id: saved.provider.id, expected: expected() })
+    },
+    reapply: async () => { const next = await recreate(expected()); current = next; restorable = next.restorable }
+  }
 }
 
 export function embedProviderPath(provider: Pick<EmbedProvider, 'directory'>): string {

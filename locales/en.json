@@ -171,6 +171,7 @@
   "surfing.error.storage": "Could not access browser storage.",
   "surfing.error.clear": "Could not clear browser data. Try again.",
   "surfing.error.profile": "This browser profile no longer exists. Choose another profile.",
+  "surfing.error.vaultChanged": "The vault changed since this action ran, so it can’t be undone or redone here.",
   "surfing.error.liveTab": "No live web tab \"{{value}}\".",
   "surfing.error.url": "Use an http or https website URL.",
   "surfing.error.closedTab": "This browser tab is closed. Open the page again.",

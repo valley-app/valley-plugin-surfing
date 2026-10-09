@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { type AgentToolProvider, type BrowserAutomationService } from '@valley/plugin-sdk'
 import { createMockValleyApi } from './mock'
 type MockValleyApi = ReturnType<typeof createMockValleyApi>
-import { surfingAgentTools } from '../src/agentTools'
+import { surfingAgentTools, registerBrowserAgentCommands } from '../src/agentTools'
 const providers = new WeakMap<object, AgentToolProvider>()
 const buildTools = (api: MockValleyApi['api']) => { const provider = providers.get(api)!; return provider.tools.map((descriptor) => ({ ...descriptor, run: (input: Record<string, unknown>) => provider.execute(descriptor.name, input) })) }
 
@@ -36,10 +36,40 @@ function installSurfingTools(
   })
   providers.set(mock.api, surfingAgentTools(service))
   const dispose = () => { providers.delete(mock.api) }
-  return { invoke, dispose }
+  return { invoke, dispose, service }
 }
 
 describe('Surfing-owned agent browser tools', () => {
+  it('executes all sixteen typed commands with false and empty values and refuses revoked or cancelled owners', async () => {
+    const mock = createMockValleyApi()
+    const { service, invoke } = installSurfingTools(mock)
+    const registrations = vi.spyOn(mock.api.commands, 'register')
+    const off = registerBrowserAgentCommands(mock.api, service)
+    const inputs: Record<string, Record<string, unknown>> = {
+      'browser-list-tabs': {}, 'browser-open-tab': { url: 'https://bird.test' },
+      'browser-switch-tab': { instanceId: 'web-1' }, 'browser-close-tab': { instanceId: 'web-1' },
+      'browser-snapshot': { instanceId: 'web-1' }, 'browser-read-page': { instanceId: 'web-1' }, 'browser-screenshot': { instanceId: 'web-1' },
+      'browser-navigate': { instanceId: 'web-1', url: 'https://bird.test/next' }, 'browser-back': { instanceId: 'web-1' },
+      'browser-forward': { instanceId: 'web-1' }, 'browser-reload': { instanceId: 'web-1' }, 'browser-click': { instanceId: 'web-1', ref: 0 },
+      'browser-type': { instanceId: 'web-1', ref: 0, text: '', submit: false }, 'browser-select': { instanceId: 'web-1', ref: 0, value: '' },
+      'browser-scroll': { instanceId: 'web-1', dx: 0, dy: 0 }, 'browser-press-key': { instanceId: 'web-1', key: 'Enter' }
+    }
+    expect(registrations.mock.calls).toHaveLength(16)
+    for (const [command] of registrations.mock.calls) {
+      expect(command.outputSchema, command.id).toBeDefined()
+      expect(command.recovery).toBe(command.sideEffect === 'read' ? 'observational' : 'non-replayable')
+      expect(await mock.api.commands.executeOwn(command.id, inputs[command.id]), command.id).toMatchObject({ ok: true })
+    }
+    expect(invoke).toHaveBeenCalledWith('type', ['web-1', 0, '', false])
+    expect(invoke).toHaveBeenCalledWith('scroll', ['web-1', 0, 0])
+    const command = registrations.mock.calls.find(([item]) => item.id === 'browser-click')![0]
+    const calls = invoke.mock.calls.length
+    const controller = new AbortController(); controller.abort()
+    await expect(command.run(inputs[command.id], { caller: 'agent', cancellation: controller.signal })).rejects.toThrow()
+    off()
+    await expect(command.run(inputs[command.id], { caller: 'agent' })).rejects.toMatchObject({ code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false })
+    expect(invoke).toHaveBeenCalledTimes(calls)
+  })
   it('registers the DOM-first browser surface', () => {
     const mock = createMockValleyApi()
     installSurfingTools(mock)
