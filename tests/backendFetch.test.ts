@@ -17,6 +17,25 @@ describe('backend URL fetch', () => {
     expect(result).toEqual({ url: 'https://forest.example/moss', status: 200, contentType: 'text/html; charset=utf-8', bytes: 11, bodyBase64: btoa('<p>Moss</p>') })
   })
 
+  it('keeps plain HTTP only for exact loopback hosts', async () => {
+    const { api, network } = backend(async () => ({ status: 200, headers: { 'content-type': 'text/plain' }, bodyBase64: btoa('Moos') }))
+    for (const [input, expected] of [
+      ['http://127.0.0.1:4810/moss#top', 'http://127.0.0.1:4810/moss'],
+      ['http://localhost:4810/moss', 'http://localhost:4810/moss'],
+      ['http://LOCALHOST:4810/moss', 'http://localhost:4810/moss'],
+      ['http://[::1]:4810/moss', 'http://[::1]:4810/moss'],
+      ['http://127.0.0.2:4810/moss', 'https://127.0.0.2:4810/moss'],
+      ['http://localhost.example/moss', 'https://localhost.example/moss'],
+      ['http://evil.localhost/moss', 'https://evil.localhost/moss'],
+      ['http://[::2]/moss', 'https://[::2]/moss']
+    ]) {
+      network.fetch.mockClear()
+      expect(await fetchUrl(api, { url: input }, new AbortController().signal)).toMatchObject({ url: expected, status: 200 })
+      expect(network.fetch).toHaveBeenCalledWith(expect.objectContaining({ url: expected }))
+    }
+    expect(await fetchUrl(api, { url: 'http://user:secret@127.0.0.1:4810/' }, new AbortController().signal)).toEqual({ error: 'url' })
+  })
+
   it('refuses non-HTTP schemes and URL credentials without a request', async () => {
     const { api, network } = backend(async () => ({ status: 200, headers: {}, bodyBase64: '' }))
     for (const url of ['ftp://forest.example/file', 'javascript:alert(1)', 'https://user:secret@forest.example/', 'not a url']) {
