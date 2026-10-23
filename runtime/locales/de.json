@@ -171,6 +171,7 @@
   "surfing.error.storage": "Auf den Browserspeicher konnte nicht zugegriffen werden.",
   "surfing.error.clear": "Die Browserdaten konnten nicht gelöscht werden. Versuche es erneut.",
   "surfing.error.profile": "Dieses Browserprofil existiert nicht mehr. Wähle ein anderes Profil.",
+  "surfing.error.vaultChanged": "Der Tresor hat sich seit dieser Aktion geändert, daher kann sie hier nicht rückgängig gemacht oder wiederholt werden.",
   "surfing.error.liveTab": "Kein aktiver Browser-Tab „{{value}}“.",
   "surfing.error.url": "Verwende eine Website-URL mit http oder https.",
   "surfing.error.closedTab": "Dieser Browser-Tab ist geschlossen. Öffne die Seite erneut.",

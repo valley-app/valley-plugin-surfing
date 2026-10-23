@@ -9,8 +9,10 @@ import { fetchTarget, type WebFetchFailure, type WebFetchResponse } from './webF
 
 const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
 const SANITIZE = { FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form'], FORBID_ATTR: ['style', 'onerror', 'onclick', 'onload'] }
-const CACHE_LIMIT = 32
+const CACHE_NAMESPACE = 'fetch'
 const CACHE_TTL_MS = 10 * 60 * 1000
+const CACHE_KEY_LIMIT = 256
+const CACHE_VALUE_LIMIT = 1024 * 1024
 const RENDER_TIMEOUT_MS = 30_000
 const RENDER_SETTLE_MS = 750
 export const FETCH_DEFAULT_CHARS = 12_000
@@ -123,13 +125,45 @@ function hostOf(url: string): string {
   try { return new URL(url).hostname } catch { return url }
 }
 
+function hash53(value: string, seed: number): string {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    h1 = Math.imul(h1 ^ code, 2654435761)
+    h2 = Math.imul(h2 ^ code, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)
+}
+
+export function fetchCacheKey(mode: WebFetchMode, url: string): string {
+  const key = `${mode}:${url}`
+  return key.length <= CACHE_KEY_LIMIT ? key : `${mode}#${hash53(key, 0)}${hash53(key, 1)}`
+}
+
+interface CachedDocument { key: string; document: FetchedDocument }
+
 export interface WebFetcher {
   fetch(input: WebFetchInput, cancellation?: ValleyCancellation): Promise<WebFetchPage>
   fetchRendered(input: WebFetchInput, cancellation?: ValleyCancellation): Promise<WebFetchPage>
 }
 
 export function createWebFetcher(api: ValleyPluginApi, store: WebStore): WebFetcher {
-  const cache = new Map<string, { at: number; document: FetchedDocument }>()
+  const lookup = async (mode: WebFetchMode, url: string): Promise<FetchedDocument | null> => {
+    try {
+      const entry = await api.cache.get<CachedDocument>(CACHE_NAMESPACE, fetchCacheKey(mode, url))
+      return entry?.key === `${mode}:${url}` && typeof entry.document?.text === 'string' ? entry.document : null
+    } catch { return null }
+  }
+
+  const remember = async (mode: WebFetchMode, url: string, document: FetchedDocument): Promise<void> => {
+    try {
+      const entry: CachedDocument = { key: `${mode}:${url}`, document }
+      if (new TextEncoder().encode(JSON.stringify(entry)).length > CACHE_VALUE_LIMIT) return
+      await api.cache.set(CACHE_NAMESPACE, fetchCacheKey(mode, url), entry, { ttlMs: CACHE_TTL_MS })
+    } catch { /* fetching never depends on the cache */ }
+  }
 
   const download = async (url: string, cancellation?: ValleyCancellation): Promise<FetchedDocument> => {
     const response = await api.backend.callOperation<WebFetchResponse | { error: WebFetchFailure; message?: string }>('fetch.url', { url }, { cancellation })
@@ -152,16 +186,13 @@ export function createWebFetcher(api: ValleyPluginApi, store: WebStore): WebFetc
     const url = fetchTarget(input.url)
     if (!url) throw Object.assign(new WebFetchError('url'), { outcome: 'not-applied', retryable: false })
     const maxChars = Math.min(FETCH_MAX_CHARS, Math.max(500, Math.floor(input.maxChars ?? FETCH_DEFAULT_CHARS)))
-    const key = `${mode}\n${url}`
     const started = Date.now()
     const activity = store.beginAgentActivity({ url, mode, title: hostOf(url) })
     try {
-      const hit = cache.get(key)
-      const cached = Boolean(hit && started - hit.at < CACHE_TTL_MS)
-      const document = cached ? hit!.document : await (mode === 'fetch' ? download(url, cancellation) : render(url, cancellation))
-      cache.delete(key)
-      cache.set(key, cached ? hit! : { at: started, document })
-      while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!)
+      const hit = await lookup(mode, url)
+      const cached = Boolean(hit)
+      const document = hit ?? await (mode === 'fetch' ? download(url, cancellation) : render(url, cancellation))
+      if (!hit) void remember(mode, url, document)
       const totalChars = document.text.length
       const startIndex = Math.min(totalChars, Math.max(0, Math.floor(input.startIndex ?? 0)))
       const end = Math.min(totalChars, startIndex + maxChars)

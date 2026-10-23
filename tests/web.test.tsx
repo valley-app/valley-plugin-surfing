@@ -1039,6 +1039,86 @@ describe('web store (open-tab persistence across reload)', () => {
       vi.useRealTimers()
     }
   })
+
+  function trackTabWrites(api: ReturnType<typeof createMockValleyApi>['api']) {
+    const open = api.data.dataset.bind(api.data)
+    const writes: unknown[] = []
+    let queries = 0
+    vi.spyOn(api.data, 'dataset').mockImplementation(((id: string) => {
+      const handle = open(id)
+      if (id !== 'tabs') return handle
+      return {
+        ...handle,
+        query: (query: Parameters<typeof handle.query>[0]) => { queries++; return handle.query(query) },
+        batch: (operations: Parameters<typeof handle.batch>[0], options?: Parameters<typeof handle.batch>[1]) => { writes.push(operations); return handle.batch(operations, options) }
+      }
+    }) as never)
+    return { writes, queries: () => queries }
+  }
+
+  it('writes only the changed tab rows after a navigation', async () => {
+    vi.useFakeTimers()
+    try {
+      const { api, datasets } = createMockValleyApi({
+        datasets: {
+          'surfing.tabs': [
+            { id: 'web-1', url: 'https://news.example', title: 'News', profileId: 'default' },
+            { id: 'web-2', url: 'https://docs.example', title: 'Docs', profileId: 'default' },
+            { id: 'web-3', url: 'https://old.example', title: 'Old', profileId: 'default' }
+          ]
+        }
+      })
+      const tracked = trackTabWrites(api)
+      const store = createStore(api)
+      await store.loadConfig()
+      const loadQueries = tracked.queries()
+      store.closeTab('web-3')
+      store.reportUrl('web-1', 'https://news.example/today')
+      await vi.advanceTimersByTimeAsync(500)
+      expect(tracked.writes).toEqual([[
+        { operation: 'delete-many', keys: [{ id: 'web-3' }] },
+        { operation: 'upsert', values: [{ id: 'web-1', url: 'https://news.example/today', title: 'News', profileId: 'default' }] }
+      ]])
+      expect(tracked.queries() - loadQueries).toBe(1)
+      store.reportUrl('web-2', 'https://docs.example/guide')
+      await vi.advanceTimersByTimeAsync(500)
+      expect(tracked.writes[1]).toEqual([{ operation: 'upsert', values: [{ id: 'web-2', url: 'https://docs.example/guide', title: 'Docs', profileId: 'default' }] }])
+      expect(tracked.queries() - loadQueries).toBe(1)
+      store.setTitle('web-2', 'Docs draft')
+      store.setTitle('web-2', 'Docs')
+      await vi.advanceTimersByTimeAsync(500)
+      expect(tracked.writes).toHaveLength(2)
+      expect(datasets.get('surfing.tabs')).toEqual([
+        { id: 'web-1', url: 'https://news.example/today', title: 'News', profileId: 'default' },
+        { id: 'web-2', url: 'https://docs.example/guide', title: 'Docs', profileId: 'default' }
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a scoped row diff never touches rows outside its scope', async () => {
+    const { api, datasets } = createMockValleyApi({
+      datasets: {
+        'surfing.tabs': [
+          { id: 'web-1', url: 'https://a.example', title: 'A', profileId: 'default' },
+          { id: 'web-2', url: 'https://b.example', title: 'B', profileId: 'p-other' }
+        ]
+      }
+    })
+    const tracked = trackTabWrites(api)
+    const store = createStore(api)
+    const replaceRows = (store as unknown as { replaceRows(datasetId: string, primaryKey: string[], records: Array<Record<string, string>>, where?: Record<string, string>): Promise<void> }).replaceRows.bind(store)
+    await replaceRows('tabs', ['id'], [{ id: 'web-3', url: 'https://c.example', title: 'C', profileId: 'default' }], { profileId: 'default' })
+    expect(tracked.writes).toEqual([[
+      { operation: 'delete-many', keys: [{ id: 'web-1' }] },
+      { operation: 'upsert', values: [{ id: 'web-3', url: 'https://c.example', title: 'C', profileId: 'default' }] }
+    ]])
+    expect(datasets.get('surfing.tabs')).toEqual([
+      { id: 'web-2', url: 'https://b.example', title: 'B', profileId: 'p-other' },
+      { id: 'web-3', url: 'https://c.example', title: 'C', profileId: 'default' }
+    ])
+  })
 })
 
 describe('web active-context interop', () => {

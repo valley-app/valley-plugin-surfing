@@ -4300,7 +4300,15 @@
         "plugins/data/surfing"
       ]
     },
-    "largeData": true
+    "largeData": true,
+    "cache": {
+      "namespaces": [
+        {
+          "id": "fetch",
+          "maxBytes": 8388608
+        }
+      ]
+    }
   },
   "settingsSchema": {
     "fields": [

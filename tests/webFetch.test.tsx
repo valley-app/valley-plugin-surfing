@@ -9,7 +9,7 @@ import { initRuntime } from '../src/runtime'
 import { createStore, disposeStore, getStore, type WebStore } from '../src/store'
 import { registerWebCommands } from '../src/commands'
 import { registerBrowserAgentCommands, surfingAgentTools } from '../src/agentTools'
-import { createWebFetcher, formatFetchResult, htmlToMarkdown, responseDocument, type WebFetchPage } from '../src/webFetch'
+import { createWebFetcher, fetchCacheKey, formatFetchResult, htmlToMarkdown, responseDocument, type WebFetchPage } from '../src/webFetch'
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 const bytes = (text: string): string => btoa(String.fromCharCode(...new TextEncoder().encode(text)))
@@ -68,6 +68,51 @@ describe('Surfing URL fetcher', () => {
     expect(mock.api.backend.callOperation).toHaveBeenCalledTimes(1)
     const activity = store.getSnapshot().agentActivity
     expect(activity.map((entry) => [entry.state, entry.cached])).toEqual([['done', true], ['done', false]])
+  })
+
+  it('serves a fetch from the persistent cache after a reload until the entry expires', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const { store, fetcher, responses, mock } = setup()
+      const text = 'fern '.repeat(50)
+      responses.set('https://forest.example/ferns.txt', { url: 'https://forest.example/ferns.txt', status: 200, contentType: 'text/plain', bytes: text.length, bodyBase64: bytes(text) })
+      await fetcher.fetch({ url: 'https://forest.example/ferns.txt' })
+      expect(mock.api.cache.set).toHaveBeenCalledWith('fetch', 'fetch:https://forest.example/ferns.txt', expect.objectContaining({ key: 'fetch:https://forest.example/ferns.txt' }), { ttlMs: 600_000 })
+      const reloaded = createWebFetcher(mock.api, store)
+      await expect(reloaded.fetch({ url: 'https://forest.example/ferns.txt' })).resolves.toMatchObject({ cached: true, content: text })
+      expect(mock.api.backend.callOperation).toHaveBeenCalledTimes(1)
+      vi.setSystemTime(Date.now() + 600_001)
+      await expect(reloaded.fetch({ url: 'https://forest.example/ferns.txt' })).resolves.toMatchObject({ cached: false })
+      expect(mock.api.backend.callOperation).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not cache documents over the value limit and keeps fetching when the cache fails', async () => {
+    const { fetcher, responses, mock } = setup()
+    const large = 'a'.repeat(1_100_000)
+    responses.set('https://forest.example/atlas.txt', { url: 'https://forest.example/atlas.txt', status: 200, contentType: 'text/plain', bytes: large.length, bodyBase64: btoa(large) })
+    await fetcher.fetch({ url: 'https://forest.example/atlas.txt' })
+    await expect(fetcher.fetch({ url: 'https://forest.example/atlas.txt' })).resolves.toMatchObject({ cached: false, totalChars: large.length })
+    expect(mock.api.cache.set).not.toHaveBeenCalled()
+    expect(mock.api.backend.callOperation).toHaveBeenCalledTimes(2)
+    const text = 'moss '.repeat(20)
+    responses.set('https://forest.example/moss.txt', { url: 'https://forest.example/moss.txt', status: 200, contentType: 'text/plain', bytes: text.length, bodyBase64: bytes(text) })
+    vi.mocked(mock.api.cache.get).mockRejectedValue(new Error('cache offline'))
+    vi.mocked(mock.api.cache.set).mockRejectedValue(new Error('cache offline'))
+    await expect(fetcher.fetch({ url: 'https://forest.example/moss.txt' })).resolves.toMatchObject({ cached: false, content: text })
+    expect(mock.api.backend.callOperation).toHaveBeenCalledTimes(3)
+  })
+
+  it('hashes long request keys within the cache key limit', () => {
+    const long = `https://forest.example/${'canopy/'.repeat(60)}`
+    const key = fetchCacheKey('fetch', long)
+    expect(key.length).toBeLessThanOrEqual(256)
+    expect(key).toMatch(/^fetch#/)
+    expect(fetchCacheKey('fetch', `${long}x`)).not.toBe(key)
+    expect(fetchCacheKey('rendered', long)).not.toBe(key)
+    expect(fetchCacheKey('fetch', 'https://forest.example/')).toBe('fetch:https://forest.example/')
   })
 
   it('marks blocked fetches as failed with a readable error', async () => {

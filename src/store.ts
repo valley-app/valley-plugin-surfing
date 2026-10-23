@@ -14,7 +14,7 @@ import type {
   ValleyPluginApi
 } from '@valley/plugin-sdk'
 import type { DriverResult } from '@valley/plugin-sdk/types'
-import type { DatasetKey, DatasetRecord, DatasetWhere } from '@valley/plugin-sdk'
+import type { DatasetBatchOperation, DatasetKey, DatasetRecord, DatasetWhere } from '@valley/plugin-sdk'
 import {
   canDeleteProfile,
   canHideProfile,
@@ -223,6 +223,8 @@ export class WebStore {
   // mount can't overwrite the saved set before {@link loadConfig} restores it.
   private tabsLoaded = false
   private persistTimer: number | null = null
+  private writtenRows = new Map<string, { scope: string; rows: Map<string, DatasetRecord> }>()
+  private rowWrites: Promise<void> = Promise.resolve()
 
   // ── Media / footer playback ───────────────────────────────────────────────
   // A guest playing audible media registers a PlaybackSource so the shared
@@ -282,24 +284,41 @@ export class WebStore {
     return rows
   }
 
-  private async replaceRows(
+  /** Replace the rows matching `where` with `records`, writing only the difference from the last
+   *  written snapshot: one delete-many for removed keys and one upsert for added or changed rows. */
+  private replaceRows(
     datasetId: string,
     primaryKey: string[],
     records: DatasetRecord[],
     where?: DatasetWhere
   ): Promise<void> {
-    const dataset = this.api.data.dataset(datasetId)
-    const existing = await this.rows(datasetId, where)
-    const operations = [
-      ...existing.map((record) => ({
-        operation: 'delete' as const,
-        key: Object.fromEntries(primaryKey.map((field) => [field, record[field] ?? null])) as DatasetKey
-      })),
-      ...records.map((values) => ({ operation: 'upsert' as const, values }))
+    const write = this.rowWrites.then(() => this.writeRowDiff(datasetId, primaryKey, records, where))
+    this.rowWrites = write.catch(() => {})
+    return write
+  }
+
+  private async writeRowDiff(datasetId: string, primaryKey: string[], records: DatasetRecord[], where?: DatasetWhere): Promise<void> {
+    const scope = JSON.stringify(where ?? null)
+    const identity = (record: DatasetRecord): string => JSON.stringify(primaryKey.map((field) => record[field] ?? null))
+    const known = this.writtenRows.get(datasetId)
+    const previous = known?.scope === scope
+      ? known.rows
+      : new Map((await this.rows(datasetId, where)).map((record) => [identity(record), record]))
+    const next = new Map(records.map((record) => [identity(record), record]))
+    const removed = [...previous]
+      .filter(([id]) => !next.has(id))
+      .map(([, record]) => Object.fromEntries(primaryKey.map((field) => [field, record[field] ?? null])) as DatasetKey)
+    const changed = records.filter((record) => {
+      const before = previous.get(identity(record))
+      return !before || Object.keys(record).some((field) => JSON.stringify(record[field] ?? null) !== JSON.stringify(before[field] ?? null))
+    })
+    const operations: DatasetBatchOperation[] = [
+      ...(removed.length ? [{ operation: 'delete-many' as const, keys: removed }] : []),
+      ...(changed.length ? [{ operation: 'upsert' as const, values: changed }] : [])
     ]
-    for (let index = 0; index < operations.length; index += 500) {
-      await dataset.batch(operations.slice(index, index + 500))
-    }
+    this.writtenRows.delete(datasetId)
+    if (operations.length) await this.api.data.dataset(datasetId).batch(operations)
+    this.writtenRows.set(datasetId, { scope, rows: next })
   }
 
   subscribe = (fn: () => void): (() => void) => {

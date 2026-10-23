@@ -29,6 +29,19 @@ export function createMockValleyApi(options: Parameters<typeof createApi>[0] = {
     } })
   }
   mock.api.ui.ContentLoader = ({ label }) => mock.api.React.createElement('span', { role: 'status', 'aria-label': label }, label)
+  const cacheEntries = new Map<string, { json: string; expiresAt: number }>()
+  Object.assign(mock.api.cache, {
+    get: vi.fn(async (namespace: string, key: string) => {
+      const entry = cacheEntries.get(`${namespace}\n${key}`)
+      return entry && entry.expiresAt > Date.now() ? JSON.parse(entry.json) : undefined
+    }),
+    set: vi.fn(async (namespace: string, key: string, value: unknown, options?: { ttlMs?: number }) => {
+      const json = JSON.stringify(value)
+      if (key.length > 256 || new TextEncoder().encode(json).length > 1024 * 1024) throw new Error('Cache value rejected')
+      cacheEntries.set(`${namespace}\n${key}`, { json, expiresAt: options?.ttlMs ? Date.now() + options.ttlMs : Infinity })
+    }),
+    delete: vi.fn(async (namespace: string, key: string) => { cacheEntries.delete(`${namespace}\n${key}`) })
+  })
   const documents = new Map<string, { content: string; revision: number }>()
   let pending = Promise.resolve()
   const observe = async (location: PluginStorageLocation) => {
@@ -95,6 +108,7 @@ export function createMockValleyApi(options: Parameters<typeof createApi>[0] = {
       onChange: listener => { listeners.add(listener); return () => { listeners.delete(listener) } },
       onAction: () => () => {},
       prepareNext: async () => {},
+      unload: vi.fn(async () => { const previous = snapshot; snapshot = null; return previous }),
       play: () => command({ type: 'play' }), pause: () => command({ type: 'pause' }), stop: () => command({ type: 'stop' }),
       toggle: () => command({ type: snapshot?.state.status === 'playing' ? 'pause' : 'play' }),
       seek: seconds => command({ type: 'seek', seconds }), setRate: rate => command({ type: 'setRate', rate }),
