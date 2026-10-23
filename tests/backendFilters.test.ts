@@ -92,7 +92,7 @@ describe('package-owned browser filter engine', () => {
     expect(network.fetch).not.toHaveBeenCalled()
   })
 
-  it('retires superseded engine configurations and bounds retained engines across profiles', async () => {
+  it('retires superseded engine configurations, bounds retained engines and reloads evicted ones from the engine cache', async () => {
     const filters = createFilters(api)
     const profiles = Array.from({ length: 10 }, (_, index) => ({
       ...config.profiles[0], partition: `profile-${index}`, rules: `https://filters.example.test/${index}.txt`
@@ -100,14 +100,16 @@ describe('package-owned browser filter engine', () => {
     await filters.configure({ profiles })
     for (const profile of profiles) await filters.request({ ...request, partition: profile.partition })
     expect(buildShards).toHaveBeenCalledTimes(10)
+    await filters.idle()
+    expect(await mock.api.data.files.list('filter-engine')).toHaveLength(10)
     await filters.request({ ...request, partition: profiles[9].partition })
     expect(buildShards).toHaveBeenCalledTimes(10)
-    await filters.request({ ...request, partition: profiles[0].partition })
-    expect(buildShards).toHaveBeenCalledTimes(11)
+    expect(await filters.request({ ...request, partition: profiles[0].partition })).toEqual({ cancel: true })
+    expect(buildShards).toHaveBeenCalledTimes(10)
     await filters.configure({ profiles: [] })
     await filters.configure({ profiles: [profiles[0]] })
-    await filters.request({ ...request, partition: profiles[0].partition })
-    expect(buildShards).toHaveBeenCalledTimes(12)
+    expect(await filters.request({ ...request, partition: profiles[0].partition })).toEqual({ cancel: true })
+    expect(buildShards).toHaveBeenCalledTimes(10)
   })
 
   it.each(['disable', 'dispose'])('discards a pending engine after %s', async (action) => {

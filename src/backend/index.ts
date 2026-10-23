@@ -7,7 +7,8 @@ import { registerArchiveReader } from './archives'
 import { registerFetch } from './fetch'
 import { registerDataOwner } from './data'
 import { registerProviderOwner } from './providers'
-import { assemble, buildShards, decodeBase64Text } from './filterShards'
+import { assemble, buildShards, decodeBase64Text, nextTurn, type ShardedParts } from './filterShards'
+import { engineCacheDirectory, loadParts, persistParts, serializeCore, type EngineManifest, type ListStamp } from './engineCache'
 
 const profileSchema = z.object({ partition: z.string().max(256), enabled: z.boolean(), rules: z.string().max(64 * 1024), frequencyDays: z.number().int().min(0).max(3650) }).strict()
 const requestSchema = z.object({ partition: z.string().max(256), phase: z.enum(['request', 'response']).optional(), url: z.string().url().max(8192), type: z.string().max(64), method: z.string().max(64), sourceUrl: z.string().max(8192) }).strict()
@@ -16,6 +17,7 @@ type Configuration = z.infer<typeof profileSchema>
 const ENGINE_CACHE_LIMIT = 8
 const configurationKey = (configuration: Configuration): string => `${configuration.frequencyDays}\n${configuration.rules}`
 const decode = (base64: string): Uint8Array => Uint8Array.from(atob(base64), (character) => character.charCodeAt(0))
+const DAY_MS = 86400000
 const digest = async (value: string): Promise<string> => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 
 export function createFilters(api: PluginBackendApi) {
@@ -25,6 +27,9 @@ export function createFilters(api: PluginBackendApi) {
   let profileRead: Promise<void> | null = null
   const profiles = new Map<string, Configuration>()
   const engines = new Map<string, Promise<FiltersEngine>>()
+  const refreshing = new Set<string>()
+  const background = new Set<Promise<unknown>>()
+  const track = (work: Promise<unknown>): void => { const settled = work.catch(() => {}).finally(() => background.delete(settled)); background.add(settled) }
   const off = new Set<() => void>()
   const readProfiles = (): Promise<void> => {
     if (configured || disposed) return Promise.resolve()
@@ -56,8 +61,8 @@ export function createFilters(api: PluginBackendApi) {
     const previous = await api.data.files.readTextBaseline(path)
     let cached: { at: number; bodyBase64: string } | undefined
     try { cached = z.object({ at: z.number(), bodyBase64: z.string() }).parse(JSON.parse(previous?.content ?? 'null')) } catch { /* Empty or outdated cache. */ }
-    const materialize = (value: { bodyBase64: string }) => {
-      return { text: () => decodeBase64Text(value.bodyBase64), arrayBuffer: async () => decode(value.bodyBase64).buffer as ArrayBuffer, json: async () => JSON.parse(await decodeBase64Text(value.bodyBase64)) }
+    const materialize = (value: { at: number; bodyBase64: string }) => {
+      return { at: value.at, text: () => decodeBase64Text(value.bodyBase64), arrayBuffer: async () => decode(value.bodyBase64).buffer as ArrayBuffer, json: async () => JSON.parse(await decodeBase64Text(value.bodyBase64)) }
     }
     if (cached && (!frequencyDays || Date.now() - cached.at < frequencyDays * 86400000)) return materialize(cached)
     try {
@@ -70,13 +75,75 @@ export function createFilters(api: PluginBackendApi) {
     } catch (error) { if (cached) return materialize(cached); throw error }
   }
   // FiltersEngine.fromLists, but indexed one bounded step per guest turn (see filterShards).
-  const build = async (urls: string[], options: { enableCompression?: boolean }, fetcher: Fetch): Promise<FiltersEngine> => {
+  const build = async (urls: string[], options: { enableCompression?: boolean }, fetcher: Fetch): Promise<ShardedParts> => {
     const [lists, resources] = await Promise.all([fetchLists(fetcher, urls), fetchResources(fetcher)])
     const parts = await buildShards(lists, options, resources, undefined, () => disposed)
     if (!parts) throw new DOMException('Filter service disposed', 'AbortError')
-    return assemble(parts)
+    return parts
   }
   const configurationFor = (partition: string): Configuration => profiles.get(partition) ?? { partition, enabled: true, rules: DEFAULT_ADBLOCK_RULES, frequencyDays: 7 }
+  const sourcesFor = (configuration: Configuration) => {
+    const urls = configuration.rules.split('\n').map((line) => line.trim()).filter((line) => /^https?:\/\//i.test(line))
+    return { urls: urls.length ? urls : adsAndTrackingLists, options: urls.length ? { enableCompression: true } : {} }
+  }
+  // Builds from the lists, then writes the serialized shards in the background so the next backend start loads them.
+  const coldBuild = async (configuration: Configuration, directory: string): Promise<FiltersEngine> => {
+    const { urls, options } = sourcesFor(configuration)
+    const stamps: ListStamp[] = []
+    const parts = await build(urls, options, async (url: string) => { const list = await fetchList(url, configuration.frequencyDays); stamps.push({ url, at: list.at }); return list })
+    const core = serializeCore(parts)
+    const engine = assemble(parts)
+    if (!disposed) track(persistParts(api.data.files, directory, parts, core, stamps, undefined, () => disposed))
+    return engine
+  }
+  // A list's stored time, read from the start of its cache record ({"at":…,"bodyBase64":…}) without parsing the body.
+  const listStamp = async (url: string): Promise<number | undefined> => {
+    const text = await api.data.files.readText(`filter-cache/${await digest(url)}.json`)
+    const match = /^\{"at":(\d+),/.exec(text?.slice(0, 40) ?? '')
+    return match ? Number(match[1]) : undefined
+  }
+  const outdated = async (manifest: EngineManifest, frequencyDays: number): Promise<boolean> => {
+    if (frequencyDays && manifest.lists.some((list) => Date.now() - list.at >= frequencyDays * DAY_MS)) return true
+    for (const list of manifest.lists) {
+      if (disposed) return false
+      const at = await listStamp(list.url)
+      if (at !== undefined && at !== list.at) return true
+    }
+    return false
+  }
+  // Keeps answering with the loaded engine; a rebuilt one replaces it only once it is complete.
+  const refresh = (key: string, configuration: Configuration, directory: string, manifest: EngineManifest): void => {
+    if (refreshing.has(key)) return
+    refreshing.add(key)
+    track((async () => {
+      try {
+        if (!await outdated(manifest, configuration.frequencyDays) || disposed) return
+        const next = await coldBuild(configuration, directory)
+        if (!disposed && engines.has(key)) engines.set(key, Promise.resolve(next))
+      } finally { refreshing.delete(key) }
+    })())
+  }
+  // The saved core has no resources (see serializeCore); without the resources list only redirects fall back to blocking.
+  const applyResources = async (core: FiltersEngine, configuration: Configuration): Promise<void> => {
+    let resources: string | undefined
+    try { resources = await fetchResources(async (url: string) => fetchList(url, configuration.frequencyDays)) } catch { return }
+    await nextTurn()
+    core.updateResources(resources, '' + resources.length)
+  }
+  const obtain = async (key: string, configuration: Configuration): Promise<FiltersEngine> => {
+    const directory = await engineCacheDirectory(key)
+    try {
+      const cached = await loadParts(api.data.files, directory, undefined, () => disposed)
+      if (cached) {
+        await applyResources(cached.parts.core, configuration)
+        const engine = assemble(cached.parts)
+        refresh(key, configuration, directory, cached.manifest)
+        return engine
+      }
+    } catch { /* Damaged or incompatible cache: build from the lists as before. */ }
+    if (disposed) throw new DOMException('Filter service disposed', 'AbortError')
+    return coldBuild(configuration, directory)
+  }
   const engine = async (partition: string): Promise<FiltersEngine | null> => {
     await readProfiles()
     while (!disposed) {
@@ -84,11 +151,7 @@ export function createFilters(api: PluginBackendApi) {
       if (!configuration.enabled) return null
       const key = configurationKey(configuration)
       let pending = engines.get(key)
-      if (!pending) {
-        const urls = configuration.rules.split('\n').map((line) => line.trim()).filter((line) => /^https?:\/\//i.test(line))
-        const fetcher = (url: string) => fetchList(url, configuration.frequencyDays)
-        pending = build(urls.length ? urls : adsAndTrackingLists, urls.length ? { enableCompression: true } : {}, fetcher)
-      }
+      if (!pending) pending = obtain(key, configuration)
       engines.delete(key)
       engines.set(key, pending)
       while (engines.size > ENGINE_CACHE_LIMIT) engines.delete(engines.keys().next().value!)
@@ -118,9 +181,12 @@ export function createFilters(api: PluginBackendApi) {
   }
   const request = async (raw: unknown) => {
     const input = requestSchema.parse(raw)
+    const request = Request.fromRawDetails({ url: input.url, sourceUrl: input.sourceUrl, type: input.type as RequestType })
+    // A main-frame request is never blocked, so it does not wait for the engine; it only starts loading it. Every other
+    // request, and the main-frame response (CSP), still waits for the engine.
+    if (input.phase !== 'response' && request.isMainFrame()) { void engine(input.partition).catch(() => {}); return {} }
     const blocker = await engine(input.partition)
     if (!blocker) return {}
-    const request = Request.fromRawDetails({ url: input.url, sourceUrl: input.sourceUrl, type: input.type as RequestType })
     if (input.phase === 'response') {
       const csp = request.isMainFrame() || request.isSubFrame() ? blocker.getCSPDirectives(request) : undefined
       return csp ? { appendResponseHeaders: { 'Content-Security-Policy': [csp] } } : {}
@@ -139,7 +205,9 @@ export function createFilters(api: PluginBackendApi) {
     const result = blocker.getCosmeticsFilters({ url: input.url, hostname: request.hostname, domain: request.domain, classes: input.classes, ids: input.ids, hrefs: input.hrefs, getBaseRules: input.initial !== false, getInjectionRules: input.initial !== false, getRulesFromDOM: true, getRulesFromHostname: true })
     return { styles: result.active ? result.styles : '', scripts: result.active ? result.scripts : [] }
   }
-  return { configure, request, cosmetics, register() { off.add(api.rpc.handle('filter.configure', configure)); off.add(api.rpc.handle('filter.prepare', async (raw) => { const value = z.object({ partition: z.string().max(256) }).strict().parse(raw); await engine(value.partition) })); off.add(api.rpc.handle('filter.request', request)); off.add(api.rpc.handle('filter.cosmetics', cosmetics)); return () => { disposed = true; configurationRevision++; off.forEach((dispose) => dispose()); off.clear(); engines.clear(); profiles.clear() } } }
+  // Resolves once background cache writes and refreshes started so far have finished (tests and orderly shutdown).
+  const idle = async (): Promise<void> => { while (background.size) await Promise.all([...background]) }
+  return { configure, request, cosmetics, idle, register() { off.add(api.rpc.handle('filter.configure', configure)); off.add(api.rpc.handle('filter.prepare', async (raw) => { const value = z.object({ partition: z.string().max(256) }).strict().parse(raw); await engine(value.partition) })); off.add(api.rpc.handle('filter.request', request)); off.add(api.rpc.handle('filter.cosmetics', cosmetics)); return () => { disposed = true; configurationRevision++; off.forEach((dispose) => dispose()); off.clear(); engines.clear(); profiles.clear() } } }
 }
 export function register(api: PluginBackendApi): () => void {
   const workflow = createWorkflowAdapter(api)
