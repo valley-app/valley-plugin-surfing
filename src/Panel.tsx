@@ -148,7 +148,7 @@ const ActivityRow: FC<{ entry: WebAgentActivity; onOpen: (e: React.MouseEvent) =
     <span className="web-activity-mark" aria-label={uiText(`surfing.activity.state.${entry.state}`)}>
       {entry.state === 'running' ? <span className="web-activity-spinner" /> : entry.state === 'done' ? <CheckIcon /> : <FailedIcon />}
     </span>
-    <button className="web-list-open" onClick={onOpen}>
+    <button className="web-list-open" onClick={onOpen} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onOpen(e) } }}>
       <span className="web-list-title">{entry.state === 'running' ? hostOf(entry.url) : entry.title || entry.url}</span>
       <span className="web-list-url">{activityDetail(entry)}</span>
     </button>
@@ -226,7 +226,7 @@ const SavedRow: FC<{
   onRemove?: () => void
 }> = ({ page, timestamp, onOpen, onRemove }) => (
   <div className="web-list-row" title={page.url}>
-    <button className="web-list-open" onClick={onOpen}>
+    <button className="web-list-open" onClick={onOpen} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onOpen(e) } }}>
       <span className="web-list-title">{page.title || page.url}</span>
       <span className="web-list-url">
         {hostOf(page.url)}
@@ -294,17 +294,20 @@ export const Panel: FC = () => {
     })
   }
 
-  /** Plain click reuses the currently focused web tab (browser-standard "same
-   *  tab" navigation); ⌘/Ctrl-click, or no web tab currently focused, opens a
-   *  fresh one — the two cases the old always-new-tab behavior conflated. */
+  /** Plain click stays in the current tab: it navigates the focused web tab, or opens the page in place of
+   *  the focused tab. The platform Mod key (⌘ on macOS, Ctrl elsewhere) or a middle click opens a new tab. */
   const openPage = (page: SavedPage, e: React.MouseEvent): void => {
     const store = getStore()
     if (!store) return
-    if (!e.metaKey && !e.ctrlKey && activeWeb) {
+    if (api.ui.hasModKey(e) || e.button === 1) {
+      store.openUrl(page.url, page.title)
+      return
+    }
+    if (activeWeb) {
       store.navigate(activeWeb.instanceId, page.url)
       return
     }
-    store.openUrl(page.url, page.title)
+    api.workspace.openMainTab({ instanceId: store.openTab(page.url), title: page.title || page.url })
   }
 
   const addCurrentToReading = (): void => {

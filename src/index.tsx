@@ -40,9 +40,9 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
   const offFileCommands = registerSurfingFileCommands(api)
   const offLinkHandler = api.links.register({
     id: 'browse', label: api.ui.t('manifest.name'), version: '1.0.0', categories: ['website'],
-    open: ({ value }) => {
+    open: ({ value }, options) => {
       const instanceId = store.openTab(value)
-      api.workspace.openMainTab({ instanceId, title: value })
+      api.workspace.openMainTab({ instanceId, title: value, ...(options?.newTab ? { newTab: true } : {}) })
       return { status: 'opened' }
     }
   })

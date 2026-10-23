@@ -1922,3 +1922,81 @@ describe('clipping document revisions', () => {
     } finally { release() }
   })
 })
+
+describe('plain click opens in the same tab, Mod or middle click in a new tab', () => {
+  const auxClick = (element: Element) => fireEvent(element, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))
+  const panel = (api: ReturnType<typeof createMockValleyApi>['api']) => (api.registerView as unknown as { mock: { calls: [string, React.ComponentType][] } }).mock.calls
+    .find(([id]) => id === 'surfing.panel')![1]
+
+  it('opens a website link in place and in a new tab when the link broker asks for one', async () => {
+    const { api } = createMockValleyApi()
+    const dispose = register(api)
+    const handler = vi.mocked(api.links.register).mock.calls.find(([entry]) => entry.id === 'browse')![0]
+    const target = { category: 'website' as const, value: 'https://example.com/survey' }
+    expect(await handler.open(target)).toEqual({ status: 'opened' })
+    expect(await handler.open(target, { newTab: false })).toEqual({ status: 'opened' })
+    expect(await handler.open(target, { newTab: true })).toEqual({ status: 'opened' })
+    expect(vi.mocked(api.workspace.openMainTab).mock.calls.map(([options]) => options)).toEqual([
+      { instanceId: expect.any(String), title: 'https://example.com/survey' },
+      { instanceId: expect.any(String), title: 'https://example.com/survey' },
+      { instanceId: expect.any(String), title: 'https://example.com/survey', newTab: true }
+    ])
+    dispose()
+  })
+
+  it('opens a Timeline entry in the focused web tab, and in a new tab on Mod or middle click as the platform defines Mod', async () => {
+    const { api } = createMockValleyApi()
+    const dispose = register(api)
+    await tick()
+    const store = getStore()!
+    const tab = store.openTab('')
+    store.reportUrl(tab, 'https://history.example/')
+    await waitFor(() => expect(store.getSnapshot().history).toHaveLength(1))
+    const focused = store.openTab('https://canopy.example/')
+    publishWebContext({ instanceId: focused, url: 'https://canopy.example/', title: 'Canopy' })
+    render(React.createElement(panel(api)))
+    fireEvent.click(screen.getByTitle('Timeline'))
+    const row = (await screen.findAllByRole('button')).find((button) => button.classList.contains('web-list-open'))!
+    const openMainTab = vi.mocked(api.workspace.openMainTab)
+    openMainTab.mockClear()
+    const navigate = vi.spyOn(store, 'navigate')
+    fireEvent.click(row)
+    expect(navigate).toHaveBeenLastCalledWith(focused, 'https://history.example/')
+    expect(openMainTab).not.toHaveBeenCalled()
+    fireEvent.click(row, { ctrlKey: true })
+    auxClick(row)
+    expect(openMainTab.mock.calls.map(([options]) => options?.newTab)).toEqual([true, true])
+    openMainTab.mockClear()
+    api.ui.hasModKey = vi.fn(() => false)
+    fireEvent.click(row, { metaKey: true })
+    expect(navigate).toHaveBeenCalledTimes(2)
+    expect(openMainTab).not.toHaveBeenCalled()
+    act(() => clearWebContext(focused))
+    fireEvent.click(row)
+    expect(openMainTab).toHaveBeenCalledTimes(1)
+    expect(openMainTab.mock.calls[0][0]).toEqual({ instanceId: expect.any(String), title: 'https://history.example/' })
+    cleanup()
+    dispose()
+  })
+
+  it('opens an embedded page in place and in a new tab on Mod or middle click', async () => {
+    vi.stubGlobal('IntersectionObserver', class { observe(): void {} unobserve(): void {} disconnect(): void {} takeRecords(): IntersectionObserverEntry[] { return [] } })
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(mock.api)
+    await waitFor(() => expect(mock.codeBlockRenderers.get('surfing')).toBeDefined())
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const offEmbed = mock.codeBlockRenderers.get('surfing')!('https://example.com/survey', el, { path: 'Research/Embed Demo.md', meta: null })
+    const open = el.querySelector('.web-fence-bar button')!
+    const openMainTab = vi.mocked(mock.api.workspace.openMainTab)
+    openMainTab.mockClear()
+    fireEvent.click(open)
+    fireEvent.click(open, { metaKey: true })
+    auxClick(open)
+    expect(openMainTab.mock.calls.map(([options]) => options?.newTab)).toEqual([undefined, true, true])
+    if (typeof offEmbed === 'function') offEmbed()
+    el.remove()
+    await dispose()
+    vi.unstubAllGlobals()
+  })
+})

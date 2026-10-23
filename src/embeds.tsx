@@ -144,12 +144,14 @@ function renderEmbed(el: HTMLElement, url: string, requestedHeight?: number, pro
   openBtn.textContent = uiText('surfing.embed.open')
   openBtn.title = uiText('surfing.embed.openDescription')
   openBtn.setAttribute('aria-label', uiText('surfing.embed.openLabel', { p0: provider?.displayName ?? url }))
-  openBtn.addEventListener('click', () => {
+  const openPage = (event: MouseEvent): void => {
     const store = getStore()
     if (!store) return
     const id = store.openTab(activeUrl)
-    api.workspace.openMainTab({ instanceId: id })
-  })
+    api.workspace.openMainTab({ instanceId: id, ...(api.ui.hasModKey(event) || event.button === 1 ? { newTab: true } : {}) })
+  }
+  openBtn.addEventListener('click', openPage)
+  openBtn.addEventListener('auxclick', (event) => { if (event.button !== 1) return; event.preventDefault(); openPage(event) })
   bar.append(urlLabel, openBtn)
 
   const body = document.createElement('div')
