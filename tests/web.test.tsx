@@ -309,6 +309,24 @@ describe('web plugin', () => {
     dispose()
   })
 
+  it('centres the page loader in a fill host on the right-sidebar content background', async () => {
+    const { api } = createMockValleyApi()
+    const dispose = register(api)
+    await tick()
+    const instanceId = getStore()!.openTab('example.com', 'default')
+    const call = (api.registerView as unknown as { mock: { calls: [string, React.ComponentType<MainWorkspaceViewProps>][] } }).mock.calls
+      .find(([id]) => id === 'surfing.page')
+    render(React.createElement(call![1], { instanceId, navigation: { setController: vi.fn() } }))
+    const loader = screen.getByRole('status', { name: 'Loads when visible…' })
+    expect(loader.parentElement).toHaveClass('web-host')
+    expect(loader.parentElement).toHaveAttribute('data-plugin-widget-layout', 'fill')
+    const css = document.getElementById('notes-web-styles')?.textContent ?? ''
+    expect(css).toMatch(/\.web-page \{[^}]*background:var\(--inspector-bg, var\(--container-color-alt\)\);/)
+    expect(css).toMatch(/\.web-archive-frame \{[^}]*background:var\(--inspector-bg, var\(--container-color-alt\)\);/)
+    cleanup()
+    dispose()
+  })
+
   it('uses eyeglasses for the Reading list tab', async () => {
     const { api } = createMockValleyApi()
     const dispose = register(api)

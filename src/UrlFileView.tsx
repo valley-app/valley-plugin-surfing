@@ -245,7 +245,7 @@ const ShortcutEditor: PluginFileView = ({ relPath, tab, mountedView }) => {
       <button className="web-link-btn" type="button" disabled={loading || saving || prepared} onClick={() => { void load() }}>{uiText('surfing.shortcut.reload')}</button>
     </form>
     {error && <div className="web-shortcut-message" role="alert">{error}</div>}
-    <div className="web-host">
+    <div className="web-host" data-plugin-widget-layout="fill">
       {loading ? <api.ui.ContentLoader label={uiText('surfing.embed.loading')} />
         : !file ? null
         : !isWebUrl(savedUrl) ? <div className="web-shortcut-message" role="status">{uiText('surfing.shortcut.invalid')}</div>

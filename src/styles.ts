@@ -1,5 +1,5 @@
 const CSS = `
-.web-page { display:flex; flex-direction:column; height:100%; background:var(--surface-color, var(--container-color)); }
+.web-page { display:flex; flex-direction:column; height:100%; background:var(--inspector-bg, var(--container-color-alt)); }
 .web-toolbar { display:flex; align-items:center; gap:8px; height:var(--app-bar-height); padding:0 calc(var(--plugin-actions-offset, 0px) + 10px) 0 calc(var(--plugin-navigation-offset, 0px) + 10px); background:var(--container-color-alt); border-bottom:1px solid var(--border-light); flex:0 0 auto; -webkit-app-region:no-drag; }
 .web-nav-group { display:flex; align-items:center; gap:2px; flex:0 0 auto; }
 .web-nav-btn { display:grid; place-items:center; width:28px; height:28px; padding:0; border:none; border-radius:6px; background:none; color:var(--text-secondary); cursor:pointer; }
@@ -17,7 +17,7 @@ const CSS = `
 .web-shortcut-message[role="alert"] { color:var(--negative-color); }
 .web-archive { min-width:0; min-height:0; overflow:hidden; color:var(--text-color); }
 .web-archive-label { flex:1; font-size:0.75rem; color:var(--text-secondary); }
-.web-archive-frame { flex:1; width:100%; min-height:0; border:0; background:var(--surface-color); }
+.web-archive-frame { flex:1; width:100%; min-height:0; border:0; background:var(--inspector-bg, var(--container-color-alt)); }
 .web-har-pagination { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-2) var(--space-3); font-size:0.75rem; border-bottom:1px solid var(--border-light); }
 .web-har-pagination > span:first-child { flex:1; }
 .web-archive button:disabled { opacity:.45; cursor:default; }

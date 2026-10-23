@@ -158,7 +158,7 @@ export const Page: FC<MainWorkspaceViewProps> = ({ instanceId, navigation }) => 
           <StarIcon filled={isFav} />
         </button>
       </div>
-      <div className="web-host">{loadError ? <div role="alert">{loadError}</div> : target && readyGuest?.target === target ? <BrowserGuest key={`${id}:${profileId}`} instanceId={id} src={url || snap.settings.homepage || 'https://www.google.com'} partition={partitionFor(profileId)} requestFilter="filter.request" audioManaged onReady={readyGuest.onReady} /> : <api.ui.ContentLoader label={uiText('surfing.embed.loading')} />}</div>
+      <div className="web-host" data-plugin-widget-layout="fill">{loadError ? <div role="alert">{loadError}</div> : target && readyGuest?.target === target ? <BrowserGuest key={`${id}:${profileId}`} instanceId={id} src={url || snap.settings.homepage || 'https://www.google.com'} partition={partitionFor(profileId)} requestFilter="filter.request" audioManaged onReady={readyGuest.onReady} /> : <api.ui.ContentLoader label={uiText('surfing.embed.loading')} />}</div>
     </div>
   )
 }
