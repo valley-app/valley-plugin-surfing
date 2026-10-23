@@ -1,5 +1,5 @@
 import { createWorkflowAdapter } from './workflow'
-import { FiltersEngine, Request, type RequestType } from '@ghostery/adblocker'
+import { FiltersEngine, Request, adsAndTrackingLists, fetchLists, fetchResources, type Fetch, type RequestType } from '@ghostery/adblocker'
 import { z } from 'zod'
 import type { PluginBackendApi } from '@valley/plugin-sdk'
 import { DEFAULT_ADBLOCK_RULES, normalizeProfileAdblock, partitionFor } from '../profiles'
@@ -7,6 +7,7 @@ import { registerArchiveReader } from './archives'
 import { registerFetch } from './fetch'
 import { registerDataOwner } from './data'
 import { registerProviderOwner } from './providers'
+import { assemble, buildShards, decodeBase64Text } from './filterShards'
 
 const profileSchema = z.object({ partition: z.string().max(256), enabled: z.boolean(), rules: z.string().max(64 * 1024), frequencyDays: z.number().int().min(0).max(3650) }).strict()
 const requestSchema = z.object({ partition: z.string().max(256), phase: z.enum(['request', 'response']).optional(), url: z.string().url().max(8192), type: z.string().max(64), method: z.string().max(64), sourceUrl: z.string().max(8192) }).strict()
@@ -56,8 +57,7 @@ export function createFilters(api: PluginBackendApi) {
     let cached: { at: number; bodyBase64: string } | undefined
     try { cached = z.object({ at: z.number(), bodyBase64: z.string() }).parse(JSON.parse(previous?.content ?? 'null')) } catch { /* Empty or outdated cache. */ }
     const materialize = (value: { bodyBase64: string }) => {
-      const bytes = decode(value.bodyBase64)
-      return { text: async () => new TextDecoder().decode(bytes), arrayBuffer: async () => bytes.buffer as ArrayBuffer, json: async () => JSON.parse(new TextDecoder().decode(bytes)) }
+      return { text: () => decodeBase64Text(value.bodyBase64), arrayBuffer: async () => decode(value.bodyBase64).buffer as ArrayBuffer, json: async () => JSON.parse(await decodeBase64Text(value.bodyBase64)) }
     }
     if (cached && (!frequencyDays || Date.now() - cached.at < frequencyDays * 86400000)) return materialize(cached)
     try {
@@ -68,6 +68,13 @@ export function createFilters(api: PluginBackendApi) {
       if (!disposed) await api.data.files.writeTextGuarded(path, JSON.stringify(record), previous?.baseline ?? null)
       return materialize(record)
     } catch (error) { if (cached) return materialize(cached); throw error }
+  }
+  // FiltersEngine.fromLists, but indexed one bounded step per guest turn (see filterShards).
+  const build = async (urls: string[], options: { enableCompression?: boolean }, fetcher: Fetch): Promise<FiltersEngine> => {
+    const [lists, resources] = await Promise.all([fetchLists(fetcher, urls), fetchResources(fetcher)])
+    const parts = await buildShards(lists, options, resources, undefined, () => disposed)
+    if (!parts) throw new DOMException('Filter service disposed', 'AbortError')
+    return assemble(parts)
   }
   const configurationFor = (partition: string): Configuration => profiles.get(partition) ?? { partition, enabled: true, rules: DEFAULT_ADBLOCK_RULES, frequencyDays: 7 }
   const engine = async (partition: string): Promise<FiltersEngine | null> => {
@@ -80,7 +87,7 @@ export function createFilters(api: PluginBackendApi) {
       if (!pending) {
         const urls = configuration.rules.split('\n').map((line) => line.trim()).filter((line) => /^https?:\/\//i.test(line))
         const fetcher = (url: string) => fetchList(url, configuration.frequencyDays)
-        pending = urls.length ? FiltersEngine.fromLists(fetcher, urls, { enableCompression: true }) : FiltersEngine.fromPrebuiltAdsAndTracking(fetcher)
+        pending = build(urls.length ? urls : adsAndTrackingLists, urls.length ? { enableCompression: true } : {}, fetcher)
       }
       engines.delete(key)
       engines.set(key, pending)

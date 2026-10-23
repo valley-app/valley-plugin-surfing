@@ -2,21 +2,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FiltersEngine } from '@ghostery/adblocker'
 import type { DatasetPage, PluginBackendApi } from '@valley/plugin-sdk'
 import { createFilters } from '../src/backend'
+import { buildShards, type ShardedParts } from '../src/backend/filterShards'
 import { partitionFor } from '../src/profiles'
 import { createMockValleyApi } from './mock'
 
+vi.mock('../src/backend/filterShards', async (load) => {
+  const actual = await load<typeof import('../src/backend/filterShards')>()
+  return { ...actual, buildShards: vi.fn(actual.buildShards) }
+})
+
 const rules = '||ads.example.test^\n@@||ads.example.test/allowed.js\nexample.test##.advert\n||example.test^$csp=script-src \'none\''
 const bytes = (value: string): string => btoa(value)
+const resources = '{"scriptlets":[],"redirects":[]}'
+const listFetches = (): number => network.fetch.mock.calls.filter(([{ url }]) => !url.endsWith('resources.json')).length
 let mock: ReturnType<typeof createMockValleyApi>
 let network: { fetch: ReturnType<typeof vi.fn> }
 let api: PluginBackendApi
 beforeEach(() => {
   mock = createMockValleyApi({ manifest: { id: 'renamed-browser' } })
-  network = { fetch: vi.fn(async () => ({ status: 200, headers: {}, bodyBase64: bytes(rules) })) }
+  network = { fetch: vi.fn(async ({ url }: { url: string }) => ({ status: 200, headers: {}, bodyBase64: bytes(url.endsWith('resources.json') ? resources : rules) })) }
   api = { data: mock.api.data, network, rpc: { handle: vi.fn(() => () => {}), emit: vi.fn() } } as unknown as PluginBackendApi
-  vi.spyOn(FiltersEngine, 'fromLists').mockImplementation(async (fetch, urls) => FiltersEngine.parse(await (await fetch(urls[0])).text()))
 })
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => { vi.restoreAllMocks(); vi.mocked(buildShards).mockClear() })
 const config = { profiles: [{ partition: 'persist:profile', enabled: true, rules: 'https://filters.example.test/list.txt', frequencyDays: 7 }] }
 const request = { partition: 'persist:profile', url: 'https://ads.example.test/track.js', type: 'script', method: 'GET', sourceUrl: 'https://example.test' }
 
@@ -28,7 +35,7 @@ describe('package-owned browser filter engine', () => {
     expect(await filters.request({ ...request, url: 'https://ads.example.test/allowed.js' })).toEqual({ cancel: false })
     expect(await filters.request({ ...request, type: 'mainFrame' })).toEqual({})
     expect(await filters.request({ ...request, phase: 'response', type: 'mainFrame', url: 'https://example.test' })).toEqual({ appendResponseHeaders: { 'Content-Security-Policy': ["script-src 'none'"] } })
-    expect(network.fetch).toHaveBeenCalledTimes(1)
+    expect(listFetches()).toBe(1)
   })
 
   it('keeps disabled profiles independent and returns cosmetic rules', async () => {
@@ -47,8 +54,8 @@ describe('package-owned browser filter engine', () => {
     const second = createFilters(api)
     await second.configure(config)
     await second.request(request)
-    expect(network.fetch).toHaveBeenCalledTimes(1)
-    expect(await mock.api.data.files.list('filter-cache')).toHaveLength(1)
+    expect(listFetches()).toBe(1)
+    expect(await mock.api.data.files.list('filter-cache')).toHaveLength(2)
   })
 
   it('validates package RPC payloads before opening a network connection', async () => {
@@ -92,28 +99,28 @@ describe('package-owned browser filter engine', () => {
     }))
     await filters.configure({ profiles })
     for (const profile of profiles) await filters.request({ ...request, partition: profile.partition })
-    expect(FiltersEngine.fromLists).toHaveBeenCalledTimes(10)
+    expect(buildShards).toHaveBeenCalledTimes(10)
     await filters.request({ ...request, partition: profiles[9].partition })
-    expect(FiltersEngine.fromLists).toHaveBeenCalledTimes(10)
+    expect(buildShards).toHaveBeenCalledTimes(10)
     await filters.request({ ...request, partition: profiles[0].partition })
-    expect(FiltersEngine.fromLists).toHaveBeenCalledTimes(11)
+    expect(buildShards).toHaveBeenCalledTimes(11)
     await filters.configure({ profiles: [] })
     await filters.configure({ profiles: [profiles[0]] })
     await filters.request({ ...request, partition: profiles[0].partition })
-    expect(FiltersEngine.fromLists).toHaveBeenCalledTimes(12)
+    expect(buildShards).toHaveBeenCalledTimes(12)
   })
 
   it.each(['disable', 'dispose'])('discards a pending engine after %s', async (action) => {
-    let complete!: (engine: FiltersEngine) => void
-    vi.mocked(FiltersEngine.fromLists).mockImplementationOnce(() => new Promise((resolve) => { complete = resolve }))
+    let complete!: (parts: ShardedParts) => void
+    vi.mocked(buildShards).mockImplementationOnce(() => new Promise((resolve) => { complete = resolve }))
     const filters = createFilters(api)
     const dispose = filters.register()
     await filters.configure(config)
     const pending = filters.request(request)
-    await vi.waitFor(() => expect(FiltersEngine.fromLists).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(buildShards).toHaveBeenCalledTimes(1))
     if (action === 'disable') await filters.configure({ profiles: [{ ...config.profiles[0], enabled: false }] })
     else dispose()
-    complete(FiltersEngine.parse(rules))
+    complete({ core: FiltersEngine.parse(rules), network: [], cosmetic: [], badFilterIds: new Set() })
     expect(await pending).toEqual({})
     if (action === 'disable') dispose()
   })
