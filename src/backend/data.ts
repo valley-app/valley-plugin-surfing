@@ -29,7 +29,8 @@ function keyFor(row: DatasetRecord, fields: string[]): DatasetKey { return Objec
 function refused(code: string, message: string): never { throw Object.assign(new Error(message), { code, outcome: 'not-applied', retryable: false }) }
 function conflict(message = 'Stored data changed; reload before saving'): never { refused('REVISION_CONFLICT', message) }
 function parsed<S extends z.ZodTypeAny>(schema: S, raw: unknown): z.infer<S> { const result = schema.safeParse(raw); if (!result.success) refused('INVALID_INPUT', result.error.message); return result.data }
-export function createDataOwner(api: Owner, guard: () => void = () => {}) {
+export function createDataOwner(api: Owner, guard: () => void = () => {}, session = false) {
+  let known: { profiles: WebProfile[]; revisions: { profiles: number; adblock: number } } | undefined
   const rows = async (dataset: string, where?: DatasetWhere) => {
     const records: DatasetRecord[] = []
     let cursor: string | undefined, observed: number | undefined
@@ -58,7 +59,9 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
     const [profiles, adblock] = await Promise.all([rows('profiles'), rows('profile_adblock')])
     const byId = new Map(adblock.rows.map(row => [row.profileId, row]))
     const values = reconcileProfiles(profiles.rows.map(normalizeProfile).filter((value): value is WebProfile => value !== null)).map(value => ({ ...value, ...normalizeProfileAdblock(byId.get(value.id) ?? {}) }))
-    return { profiles: values, revisions: { profiles: profiles.revision, adblock: adblock.revision }, browserCleanupDeferred: [] as string[], records: { profiles, adblock } }
+    const revisions = { profiles: profiles.revision, adblock: adblock.revision }
+    if (session) known = { profiles: values, revisions }
+    return { profiles: values, revisions, browserCleanupDeferred: [] as string[], records: { profiles, adblock } }
   }
   const list = async () => { const { records: _, ...result } = await snapshot(); return result }
   const replace = async (raw: unknown) => {
@@ -81,6 +84,7 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
       ...entry.previous.rows.length ? [{ dataset: entry.dataset, operation: 'delete-many' as const, keys: entry.previous.rows.map(row => keyFor(row, entry.key)) }] : [],
       { dataset: entry.dataset, operation: 'upsert' as const, values: entry.next }
     ]), { expected: entries.map(entry => ({ dataset: entry.dataset, revision: entry.previous.revision })) })
+    if (session) known = { profiles: input.profiles, revisions: { profiles: result.revision, adblock: result.revision } }
     api.rpc.emit('data.changed', { domains: ['profiles', ...(removed.length ? ['saved', 'history'] : [])] })
     return { profiles: input.profiles, revisions: { profiles: result.revision, adblock: result.revision }, browserCleanupDeferred: removed }
   }
@@ -126,11 +130,18 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
     'history.list': (raw: unknown) => pageList('visits', parsed(dataSchemas['history.list'], raw)),
     'history.clear': (raw: unknown) => replacePages('visits', { ...parsed(dataSchemas['history.clear'], raw), pages: [] }),
     'history.append': async (raw: unknown) => {
-      const input = parsed(dataSchemas['history.append'], raw), { current, selected } = await profileFor(input.profileId)
+      const input = parsed(dataSchemas['history.append'], raw), remembered = known && known.profiles.find(value => value.id === input.profileId)
+      const { current, selected } = remembered ? { current: known!, selected: remembered } : await profileFor(input.profileId)
       if (selected.private) return { recorded: false }
       if (!/^https?:/i.test(input.page.url)) refused('INVALID_INPUT', 'History accepts HTTP(S) URLs only')
-      if ((await rows('visits', { id: input.id })).rows.length) refused('INVALID_INPUT', 'History entry ID already exists')
-      await transact([{ dataset: 'visits', operation: 'insert', values: [{ ...input.page, id: input.id, profileId: input.profileId }] }], { expected: [{ dataset: 'profiles', revision: current.revisions.profiles }] })
+      // The session owner's IDs come from its own store, and the primary key still refuses a duplicate.
+      if (!session && (await rows('visits', { id: input.id })).rows.length) refused('INVALID_INPUT', 'History entry ID already exists')
+      const insert = (profiles: number) => transact([{ dataset: 'visits', operation: 'insert', values: [{ ...input.page, id: input.id, profileId: input.profileId }] }], { expected: [{ dataset: 'profiles', revision: profiles }] })
+      await insert(current.revisions.profiles).catch(async (error: unknown) => {
+        if (!remembered || (error as { code?: unknown } | null)?.code !== 'REVISION_CONFLICT') throw error
+        known = undefined
+        await insert((await profileFor(input.profileId)).current.revisions.profiles)
+      })
       return { recorded: true }
     }
   }
@@ -138,7 +149,7 @@ export function createDataOwner(api: Owner, guard: () => void = () => {}) {
 export type ProfilesSnapshot = z.infer<typeof dataOutputSchemas.profiles>
 export type PagesSnapshot = z.infer<typeof dataOutputSchemas.pages>
 export function registerDataOwner(api: PluginBackendApi): () => void {
-  const ui = createDataOwner(api)
+  const ui = createDataOwner(api, undefined, true)
   const disposers = Object.keys(dataSchemas).flatMap(method => [
     api.rpc.handle(`data.${method}`, input => ui[method as keyof typeof ui](input)),
     api.rpc.handleOperation(`command.${method}`, (input, context) => createDataOwner(context.api, () => context.cancellation.throwIfAborted())[method as keyof typeof ui](input))

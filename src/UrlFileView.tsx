@@ -235,14 +235,20 @@ const ShortcutEditor: PluginFileView = ({ relPath, tab, mountedView }) => {
     }
   })
 
-  return <div className="web-page">
+  return <div className="web-page web-shortcut">
     <form className="web-toolbar" onSubmit={event => { event.preventDefault(); void save() }}>
       <input className="web-address" aria-label={uiText('surfing.shortcut.address')} placeholder="https://example.com"
         value={draft} spellCheck={false} disabled={loading || saving || !file}
         readOnly={prepared}
         onChange={event => { if (!state.current.active || state.current.fences || state.current.saving || !state.current.loaded) return; changeDraft(event.target.value) }} />
-      <button className="web-link-btn" type="submit" disabled={loading || saving || prepared || !file || draft === savedUrl}>{uiText('surfing.shortcut.save')}</button>
-      <button className="web-link-btn" type="button" disabled={loading || saving || prepared} onClick={() => { void load() }}>{uiText('surfing.shortcut.reload')}</button>
+      <button className="web-link-btn web-shortcut-action" type="submit" aria-label={uiText('surfing.shortcut.save')} title={uiText('surfing.shortcut.save')} disabled={loading || saving || prepared || !file || draft === savedUrl}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+        <span>{uiText('surfing.shortcut.save')}</span>
+      </button>
+      <button className="web-link-btn web-shortcut-action" type="button" aria-label={uiText('surfing.shortcut.reload')} title={uiText('surfing.shortcut.reload')} disabled={loading || saving || prepared} onClick={() => { void load() }}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+        <span>{uiText('surfing.shortcut.reload')}</span>
+      </button>
     </form>
     {error && <div className="web-shortcut-message" role="alert">{error}</div>}
     <div className="web-host" data-plugin-widget-layout="fill">

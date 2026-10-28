@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { PluginBackendApi, PluginBackendOperationContext } from '@valley/plugin-sdk'
-import { registerDataOwner, type ProfilesSnapshot, type PagesSnapshot } from '../src/backend/data'
+import { createDataOwner, registerDataOwner, type ProfilesSnapshot, type PagesSnapshot } from '../src/backend/data'
 import { createMockValleyApi } from './mock'
 import { assertCommandOutput } from './commandContracts'
 
@@ -120,6 +120,25 @@ describe('owned background browser data', () => {
     const unknown = await call('profiles.patch', { id: 'default', patch: { name: 'Unknown' }, expected: initial.revisions }).catch((error: unknown) => error)
     expect(unknown).toMatchObject({ code: 'store-unavailable', outcomeUnknown: true })
     expect(unknown).not.toHaveProperty('outcome')
+  })
+
+  it('appends session history from cached profiles and re-reads them once after another owner changed them', async () => {
+    const { api } = createMockValleyApi(), rpc = { emit: vi.fn() }
+    const session = createDataOwner({ data: api.data, rpc }, undefined, true), other = createDataOwner({ data: api.data, rpc })
+    const page = { url: 'https://forest.example', title: 'Forest', ts: 1 }
+    const initial = await session['profiles.list']({})
+    const changed = await other['profiles.set']({ profiles: initial.profiles, expected: initial.revisions })
+    const reads = vi.spyOn(api.data, 'dataset'), transaction = vi.spyOn(api.data, 'transaction')
+    expect(await session['history.append']({ profileId: 'default', page, id: 'visit-1' })).toEqual({ recorded: true })
+    expect([reads.mock.calls.length, transaction.mock.calls.length]).toEqual([2, 2])
+    expect(await session['history.append']({ profileId: 'default', page: { ...page, ts: 2 }, id: 'visit-2' })).toEqual({ recorded: true })
+    expect([reads.mock.calls.length, transaction.mock.calls.length]).toEqual([2, 3])
+    const created = await other['profiles.create']({ name: 'Moss', expected: changed.revisions })
+    const moss = created.profiles.find(value => value.name === 'Moss')!.id
+    await session['history.append']({ profileId: moss, page, id: 'visit-3' })
+    await other['profiles.delete']({ id: moss, expected: created.revisions })
+    await expect(session['history.append']({ profileId: moss, page: { ...page, ts: 3 }, id: 'visit-4' })).rejects.toMatchObject({ code: 'TARGET_NOT_FOUND' })
+    expect((await api.data.dataset('visits').query({})).rows.map(row => row.id)).toEqual(['visit-1', 'visit-2'])
   })
 
   it('cancels after owner reads before a durable mutation', async () => {

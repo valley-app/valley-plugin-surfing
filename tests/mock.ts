@@ -72,7 +72,7 @@ export function createMockValleyApi(options: Parameters<typeof createApi>[0] = {
       if (!options?.recursive && (await mock.api.data.files.list(location.path ?? '')).length) throw Object.assign(new Error('Directory is not empty'), { code: 'ENOTEMPTY' })
     })
   } as unknown as PluginBackendOperationContext['api']['storage']
-  const rpc = { emit: () => {} }, data = createDataOwner({ data: mock.api.data, rpc }), providers = createProviderOwner({ data: mock.api.data, rpc, storage })
+  const rpc = { emit: () => {} }, data = createDataOwner({ data: mock.api.data, rpc }, undefined, true), providers = createProviderOwner({ data: mock.api.data, rpc, storage })
   vi.mocked(mock.api.backend.call).mockImplementation(async (method, input) => {
     if (method.startsWith('data.') && method.slice(5) in data) return await data[method.slice(5) as keyof typeof data](input) as never
     if (method in providers) return await providers[method as keyof typeof providers](input) as never

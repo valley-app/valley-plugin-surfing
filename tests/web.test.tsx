@@ -645,6 +645,15 @@ describe('web plugin', () => {
     dispose()
   })
 
+  it('opens surfing:open in a new workspace tab instead of replacing the active one', async () => {
+    const { api } = createMockValleyApi({ manifest: { id: 'surfing' } })
+    const dispose = register(api)
+    const res = await api.commands.execute('surfing:open', { url: 'example.com' })
+    expect(res.ok).toBe(true)
+    expect(api.workspace.openMainTab).toHaveBeenLastCalledWith({ instanceId: expect.any(String), title: 'example.com', newTab: true })
+    dispose()
+  })
+
   it('reveals tabs as an execute effect and refuses unknown tabs as not-applied before dispatch', async () => {
     const mock = createMockValleyApi({ manifest: { id: 'surfing' } })
     const dispose = register(mock.api)
@@ -1021,6 +1030,7 @@ describe('web store (open-tab persistence across reload)', () => {
         ]
       }
     })
+    vi.spyOn(api.workspace, 'getOpenMainTabs').mockReturnValue(['web-1', 'web-2'])
     const store = createStore(api)
     await store.loadConfig()
     expect(store.getTab('web-1')?.url).toBe('https://news.example')
@@ -1058,84 +1068,81 @@ describe('web store (open-tab persistence across reload)', () => {
     }
   })
 
-  function trackTabWrites(api: ReturnType<typeof createMockValleyApi>['api']) {
-    const open = api.data.dataset.bind(api.data)
-    const writes: unknown[] = []
-    let queries = 0
-    vi.spyOn(api.data, 'dataset').mockImplementation(((id: string) => {
-      const handle = open(id)
-      if (id !== 'tabs') return handle
-      return {
-        ...handle,
-        query: (query: Parameters<typeof handle.query>[0]) => { queries++; return handle.query(query) },
-        batch: (operations: Parameters<typeof handle.batch>[0], options?: Parameters<typeof handle.batch>[1]) => { writes.push(operations); return handle.batch(operations, options) }
-      }
-    }) as never)
-    return { writes, queries: () => queries }
-  }
-
-  it('writes only the changed tab rows after a navigation', async () => {
+  it('records five link navigations in one tab with at most ten dataset operations', async () => {
     vi.useFakeTimers()
     try {
-      const { api, datasets } = createMockValleyApi({
-        datasets: {
-          'surfing.tabs': [
-            { id: 'web-1', url: 'https://news.example', title: 'News', profileId: 'default' },
-            { id: 'web-2', url: 'https://docs.example', title: 'Docs', profileId: 'default' },
-            { id: 'web-3', url: 'https://old.example', title: 'Old', profileId: 'default' }
-          ]
-        }
-      })
-      const tracked = trackTabWrites(api)
+      const { api, datasets } = createMockValleyApi()
       const store = createStore(api)
       await store.loadConfig()
-      const loadQueries = tracked.queries()
-      store.closeTab('web-3')
-      store.reportUrl('web-1', 'https://news.example/today')
+      const id = store.openTab('https://forest.example/p/0')
       await vi.advanceTimersByTimeAsync(500)
-      expect(tracked.writes).toEqual([[
-        { operation: 'delete-many', keys: [{ id: 'web-3' }] },
-        { operation: 'upsert', values: [{ id: 'web-1', url: 'https://news.example/today', title: 'News', profileId: 'default' }] }
-      ]])
-      expect(tracked.queries() - loadQueries).toBe(1)
-      store.reportUrl('web-2', 'https://docs.example/guide')
-      await vi.advanceTimersByTimeAsync(500)
-      expect(tracked.writes[1]).toEqual([{ operation: 'upsert', values: [{ id: 'web-2', url: 'https://docs.example/guide', title: 'Docs', profileId: 'default' }] }])
-      expect(tracked.queries() - loadQueries).toBe(1)
-      store.setTitle('web-2', 'Docs draft')
-      store.setTitle('web-2', 'Docs')
-      await vi.advanceTimersByTimeAsync(500)
-      expect(tracked.writes).toHaveLength(2)
-      expect(datasets.get('surfing.tabs')).toEqual([
-        { id: 'web-1', url: 'https://news.example/today', title: 'News', profileId: 'default' },
-        { id: 'web-2', url: 'https://docs.example/guide', title: 'Docs', profileId: 'default' }
-      ])
+      const counts = { read: 0, write: 0 }
+      const reads = new Set(['get', 'read', 'query', 'count', 'aggregate'])
+      const dataset = api.data.dataset.bind(api.data), transaction = api.data.transaction.bind(api.data), snapshot = api.data.snapshot.bind(api.data)
+      vi.spyOn(api.data, 'dataset').mockImplementation(globalId => {
+        const value = dataset(globalId)
+        return Object.fromEntries(Object.entries(value).map(([name, method]) => [name, name === 'subscribe' ? method : (...args: unknown[]) => { counts[reads.has(name) ? 'read' : 'write']++; return (method as (...input: unknown[]) => unknown)(...args) }])) as typeof value
+      })
+      vi.spyOn(api.data, 'transaction').mockImplementation((...args) => { counts.write++; return transaction(...args) })
+      vi.spyOn(api.data, 'snapshot').mockImplementation((...args) => { counts.read++; return snapshot(...args) })
+      for (let page = 1; page <= 5; page++) {
+        store.reportUrl(id, `https://forest.example/p/${page}`)
+        store.setTitle(id, `Page ${page}`)
+        await vi.advanceTimersByTimeAsync(500)
+      }
+      expect(counts.read + counts.write).toBeLessThanOrEqual(10)
+      expect(counts.read).toBe(0)
+      expect((datasets.get('surfing.visits') ?? []).map(row => row.url)).toEqual([1, 2, 3, 4, 5].map(page => `https://forest.example/p/${page}`))
+      expect(datasets.get('surfing.tabs')).toEqual([{ id, url: 'https://forest.example/p/5', title: 'Page 5', profileId: 'default' }])
+      store.dispose()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('a scoped row diff never touches rows outside its scope', async () => {
-    const { api, datasets } = createMockValleyApi({
-      datasets: {
-        'surfing.tabs': [
-          { id: 'web-1', url: 'https://a.example', title: 'A', profileId: 'default' },
-          { id: 'web-2', url: 'https://b.example', title: 'B', profileId: 'p-other' }
-        ]
-      }
-    })
-    const tracked = trackTabWrites(api)
-    const store = createStore(api)
-    const replaceRows = (store as unknown as { replaceRows(datasetId: string, primaryKey: string[], records: Array<Record<string, string>>, where?: Record<string, string>): Promise<void> }).replaceRows.bind(store)
-    await replaceRows('tabs', ['id'], [{ id: 'web-3', url: 'https://c.example', title: 'C', profileId: 'default' }], { profileId: 'default' })
-    expect(tracked.writes).toEqual([[
-      { operation: 'delete-many', keys: [{ id: 'web-1' }] },
-      { operation: 'upsert', values: [{ id: 'web-3', url: 'https://c.example', title: 'C', profileId: 'default' }] }
-    ]])
-    expect(datasets.get('surfing.tabs')).toEqual([
-      { id: 'web-2', url: 'https://b.example', title: 'B', profileId: 'p-other' },
-      { id: 'web-3', url: 'https://c.example', title: 'C', profileId: 'default' }
-    ])
+  it('drops tab records left by a torn-down surface when the store activates', async () => {
+    vi.useFakeTimers()
+    try {
+      const { api, datasets } = createMockValleyApi({
+        datasets: {
+          'surfing.tabs': [
+            { id: 'web-open', url: 'https://open.example', title: 'Open', profileId: 'default' },
+            { id: 'web-gone', url: 'https://gone.example', title: 'Gone', profileId: 'default' }
+          ]
+        }
+      })
+      vi.spyOn(api.workspace, 'getOpenMainTabs').mockReturnValue(['web-open'])
+      const store = createStore(api)
+      await store.loadConfig()
+      expect(store.getTab('web-open')?.url).toBe('https://open.example')
+      expect(store.getTab('web-gone')).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(500)
+      expect((datasets.get('surfing.tabs') ?? []).map(row => row.id)).toEqual(['web-open'])
+      store.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('writes back its open tab records after another window activates and drops them', async () => {
+    vi.useFakeTimers()
+    try {
+      const { api, datasets } = createMockValleyApi()
+      vi.spyOn(api.workspace, 'getOpenMainTabs').mockReturnValue([])
+      const first = new WebStore(api)
+      await first.loadConfig()
+      const id = first.openTab('https://first.example')
+      await vi.advanceTimersByTimeAsync(500)
+      const second = new WebStore(api)
+      await second.loadConfig()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(second.getTab(id)).toBeUndefined()
+      expect(datasets.get('surfing.tabs')).toEqual([{ id, url: 'https://first.example', title: '', profileId: 'default' }])
+      first.dispose()
+      second.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

@@ -14,7 +14,7 @@ import type {
   ValleyPluginApi
 } from '@valley/plugin-sdk'
 import type { DriverResult } from '@valley/plugin-sdk/types'
-import type { DatasetBatchOperation, DatasetKey, DatasetRecord, DatasetWhere } from '@valley/plugin-sdk'
+import type { DatasetKey, DatasetRecord, DatasetWhere } from '@valley/plugin-sdk'
 import {
   canDeleteProfile,
   canHideProfile,
@@ -223,8 +223,10 @@ export class WebStore {
   // mount can't overwrite the saved set before {@link loadConfig} restores it.
   private tabsLoaded = false
   private persistTimer: number | null = null
-  private writtenRows = new Map<string, { scope: string; rows: Map<string, DatasetRecord> }>()
-  private rowWrites: Promise<void> = Promise.resolve()
+  // What this window last wrote per tab id, so a write sends only its changes.
+  private persistedTabs: Map<string, string> | null = null
+  private tabWrites: Promise<void> = Promise.resolve()
+  private tabRevisions = new Set<number>()
 
   // ── Media / footer playback ───────────────────────────────────────────────
   // A guest playing audible media registers a PlaybackSource so the shared
@@ -246,6 +248,7 @@ export class WebStore {
   private offData: () => void
   private offBrowser: () => void
   private offState: () => void
+  private offTabs: () => void
   private agentTabId: string | null = null
   private loadWaiters = new Map<string, Set<(result: 'load' | 'timeout') => void>>()
 
@@ -259,6 +262,10 @@ export class WebStore {
       if (this.disposed) return
       this.listLoads.clear()
       void this.loadConfig().catch(error => this.setSnap({ profileError: error instanceof Error ? error.message : String(error) }))
+    })
+    // Another window may drop this window's records while reconciling its own; write them back.
+    this.offTabs = api.data.dataset(TABS_DATASET).subscribe((event) => {
+      void this.tabWrites.then(() => this.tabRevisions.delete(event.revision) ? undefined : this.claimTabs()).catch(() => {})
     })
     const root = api.getState().vault?.path ?? null
     this.offState = api.subscribe(() => {
@@ -282,43 +289,6 @@ export class WebStore {
       cursor = page.cursor
     } while (cursor)
     return rows
-  }
-
-  /** Replace the rows matching `where` with `records`, writing only the difference from the last
-   *  written snapshot: one delete-many for removed keys and one upsert for added or changed rows. */
-  private replaceRows(
-    datasetId: string,
-    primaryKey: string[],
-    records: DatasetRecord[],
-    where?: DatasetWhere
-  ): Promise<void> {
-    const write = this.rowWrites.then(() => this.writeRowDiff(datasetId, primaryKey, records, where))
-    this.rowWrites = write.catch(() => {})
-    return write
-  }
-
-  private async writeRowDiff(datasetId: string, primaryKey: string[], records: DatasetRecord[], where?: DatasetWhere): Promise<void> {
-    const scope = JSON.stringify(where ?? null)
-    const identity = (record: DatasetRecord): string => JSON.stringify(primaryKey.map((field) => record[field] ?? null))
-    const known = this.writtenRows.get(datasetId)
-    const previous = known?.scope === scope
-      ? known.rows
-      : new Map((await this.rows(datasetId, where)).map((record) => [identity(record), record]))
-    const next = new Map(records.map((record) => [identity(record), record]))
-    const removed = [...previous]
-      .filter(([id]) => !next.has(id))
-      .map(([, record]) => Object.fromEntries(primaryKey.map((field) => [field, record[field] ?? null])) as DatasetKey)
-    const changed = records.filter((record) => {
-      const before = previous.get(identity(record))
-      return !before || Object.keys(record).some((field) => JSON.stringify(record[field] ?? null) !== JSON.stringify(before[field] ?? null))
-    })
-    const operations: DatasetBatchOperation[] = [
-      ...(removed.length ? [{ operation: 'delete-many' as const, keys: removed }] : []),
-      ...(changed.length ? [{ operation: 'upsert' as const, values: changed }] : [])
-    ]
-    this.writtenRows.delete(datasetId)
-    if (operations.length) await this.api.data.dataset(datasetId).batch(operations)
-    this.writtenRows.set(datasetId, { scope, rows: next })
   }
 
   subscribe = (fn: () => void): (() => void) => {
@@ -356,11 +326,38 @@ export class WebStore {
     if (this.persistTimer != null) clearTimeout(this.persistTimer)
     this.persistTimer = window.setTimeout(() => {
       this.persistTimer = null
-      const recs = Object.entries(this.snap.tabs)
-        .filter(([, tab]) => !this.isPrivate(tab.profileId))
-        .map(([id, t]) => ({ id, url: t.url, title: t.title, profileId: t.profileId }))
-      void this.replaceRows(TABS_DATASET, ['id'], recs)
+      this.tabWrites = this.tabWrites.then(() => this.writeTabs()).catch(() => { this.persistedTabs = null })
     }, 400)
+  }
+
+  private async writeTabs(): Promise<void> {
+    if (this.disposed) return
+    const recs = Object.entries(this.snap.tabs)
+      .filter(([, tab]) => !this.isPrivate(tab.profileId))
+      .map(([id, t]) => ({ id, url: t.url, title: t.title, profileId: t.profileId }))
+    const next = new Map(recs.map((record) => [record.id, JSON.stringify([record.id, record.url, record.title, record.profileId])]))
+    const previous = this.persistedTabs
+    this.persistedTabs = null
+    const operations = previous ? [
+      ...[...previous.keys()].filter((id) => !next.has(id)).map((id) => ({ operation: 'delete' as const, key: { id } })),
+      ...recs.filter((record) => previous.get(record.id) !== next.get(record.id)).map((values) => ({ operation: 'upsert' as const, values }))
+    ] : [
+      ...(await this.rows(TABS_DATASET)).map((record) => ({ operation: 'delete' as const, key: { id: record.id ?? null } as DatasetKey })),
+      ...recs.map((values) => ({ operation: 'upsert' as const, values }))
+    ]
+    const dataset = this.api.data.dataset(TABS_DATASET)
+    for (let index = 0; index < operations.length; index += 500) {
+      this.tabRevisions.add((await dataset.batch(operations.slice(index, index + 500))).revision)
+      if (this.tabRevisions.size > 64) this.tabRevisions.delete(this.tabRevisions.values().next().value!)
+    }
+    this.persistedTabs = next
+  }
+
+  private async claimTabs(): Promise<void> {
+    if (this.disposed || !this.tabsLoaded || !this.persistedTabs) return
+    const stored = new Set((await this.rows(TABS_DATASET)).map((record) => record.id))
+    for (const id of [...this.persistedTabs.keys()]) if (!stored.has(id)) this.persistedTabs?.delete(id)
+    this.persistTabs()
   }
 
   // ── Config (profiles + settings) ──────────────────────────────────────────
@@ -392,8 +389,10 @@ export class WebStore {
     // an early Page mount already created: keep a tab the user has actively
     // navigated (non-empty url), otherwise adopt the saved page.
     const restored: Record<string, WebTabState> = {}
+    const activation = !this.tabsLoaded
     try {
       const recs = await this.rows(TABS_DATASET)
+      if (activation) this.persistedTabs = new Map(recs.map((r) => [String(r.id), JSON.stringify([r.id, r.url, r.title, r.profileId])]))
       for (const r of recs) {
         const id = typeof r.id === 'string' ? r.id : ''
         if (!id) continue
@@ -412,8 +411,13 @@ export class WebStore {
     }
     if (this.disposed) return
     const tabs: Record<string, WebTabState> = { ...this.snap.tabs }
+    // Restore only tabs this window still shows: records of a surface torn down
+    // while the plugin was unloaded (or in a closed window) are dropped on activation.
+    const open = new Set(this.api.workspace.getOpenMainTabs())
+    let dropped = false
     for (const [id, t] of Object.entries(restored)) {
       const cur = tabs[id]
+      if (!cur && !open.has(id) && !this.hosts.has(id) && id !== '__single') { dropped = true; continue }
       if (!cur || !cur.url) tabs[id] = t
     }
     const remounted = new Set<string>()
@@ -447,7 +451,7 @@ export class WebStore {
       this.drive(id)
       this.updateWorkspaceTabTitle(id)
     }
-    if (remounted.size > 0) this.persistTabs()
+    if (remounted.size > 0 || (activation && dropped)) this.persistTabs()
     this.syncAdblock(true)
   }
 
@@ -1304,6 +1308,7 @@ export class WebStore {
     this.offData()
     this.offBrowser()
     this.offState()
+    this.offTabs()
     if (this.reconcileTimer != null) clearInterval(this.reconcileTimer)
     this.reconcileTimer = null
     for (const id of this.views.keys()) this.disposeView(id)

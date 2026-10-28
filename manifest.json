@@ -2,7 +2,7 @@
   "apiVersion": 5,
   "id": "surfing",
   "name": "Surfing",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Embedded browser: open websites as workspace tabs with isolated profiles, history and ad-blocking — and let the assistant drive pages (navigate, click, fill forms, screenshot).",
   "author": [
     "valley"

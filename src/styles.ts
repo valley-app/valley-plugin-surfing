@@ -1,6 +1,6 @@
 const CSS = `
 .web-page { display:flex; flex-direction:column; height:100%; background:var(--inspector-bg, var(--container-color-alt)); }
-.web-toolbar { display:flex; align-items:center; gap:8px; height:var(--app-bar-height); padding:0 calc(var(--plugin-actions-offset, 0px) + 10px) 0 calc(var(--plugin-navigation-offset, 0px) + 10px); background:var(--container-color-alt); border-bottom:1px solid var(--border-light); flex:0 0 auto; -webkit-app-region:no-drag; }
+.web-toolbar { display:flex; align-items:center; gap:8px; box-sizing:border-box; height:var(--app-bar-height); padding:0 calc(var(--plugin-actions-offset, 0px) + 10px) 0 calc(var(--plugin-navigation-offset, 0px) + 10px); background:var(--container-color-alt); border-bottom:1px solid var(--border-light); flex:0 0 auto; -webkit-app-region:no-drag; }
 .web-nav-group { display:flex; align-items:center; gap:2px; flex:0 0 auto; }
 .web-nav-btn { display:grid; place-items:center; width:28px; height:28px; padding:0; border:none; border-radius:6px; background:none; color:var(--text-secondary); cursor:pointer; }
 .web-nav-btn:hover { background:var(--hover-bg); color:var(--text-color); }
@@ -116,6 +116,25 @@ const CSS = `
 
 @media (max-width:720px) {
   .web-toolbar-profile { max-width:96px; }
+}
+/* An Internet shortcut's toolbar is its own bar below the host path bar, so it reserves no host controls;
+   narrow panes show its actions as icons, and the narrowest move them into a second bar. */
+.web-shortcut { container-type:inline-size; }
+.web-shortcut .web-toolbar { padding:0 10px; }
+.web-shortcut .web-address { min-width:120px; }
+.web-shortcut-action { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; }
+.web-shortcut-action svg { display:none; }
+@container (max-width:400px) {
+  .web-shortcut-action { width:28px; height:28px; padding:0; }
+  .web-shortcut-action svg { display:block; }
+  .web-shortcut-action > span { display:none; }
+}
+@container (max-width:220px) {
+  .web-shortcut .web-toolbar { display:grid; grid-template-columns:minmax(0, 1fr) auto auto; grid-template-rows:var(--app-bar-height) calc(var(--app-bar-height) - 1px); row-gap:0; height:calc(2 * var(--app-bar-height)); }
+  .web-shortcut .web-address { grid-column:1 / -1; min-width:0; width:100%; box-sizing:border-box; }
+  .web-shortcut-action { grid-row:2; }
+  .web-shortcut-action[type="submit"] { grid-column:2; }
+  .web-shortcut-action[type="button"] { grid-column:3; }
 }
 
 /* Profiles is the shared settings list page (.settings-listpage-* / .settings-list-*

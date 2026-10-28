@@ -489,8 +489,8 @@ const AddProfile: FC<{ onBack: () => void; onCreated: (id: string) => void }> = 
   }
   return (
     <section className="settings-section web-settings">
-      <CrumbBand current="Add profile" onBack={onBack} />
-      <Row title={uiText('auto.77574766df8d')} description={uiText('auto.bfe3b7674b5f')}>
+      <CrumbBand current={uiText('auto.b8e7f05b3ae2')} onBack={onBack} />
+      <Row title={uiText('auto.77574766df8d')} description={uiText('surfing.profile.addDescription')}>
         <TextField
           value={name}
           onChange={setName}

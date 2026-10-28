@@ -39,7 +39,7 @@ export function createBrowserAutomationService(
     list: () => store.listBrowserTabs(),
     open: async (url) => {
       const instanceId = store.openTab(url)
-      api.workspace.openMainTab({ instanceId, title: url.trim() || uiText('auto.6f23a36f0aa1') })
+      api.workspace.openMainTab({ instanceId, title: url.trim() || uiText('auto.6f23a36f0aa1'), newTab: true })
       const tab = store.getTab(instanceId)
       return { ok: true, data: { instanceId, url: tab?.url ?? '', title: tab?.title } }
     },
