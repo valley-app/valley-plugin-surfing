@@ -16,7 +16,7 @@ Archive viewers reload after external file changes and provide **Reload file** f
 
 This repository owns the plugin’s interface, behavior, dependencies, schemas, tests, translations, and compiled releases. It uses Valley manifest API 5 and the injected SDK 6.
 
-Valley ships this core plugin as a verified release artifact in its application resources. Core and external installations run with the same sandbox, permissions, and SDK/IPC contract. The core package and its locale files are never installed into `.valley`; ordinary vault documents and saved plugin data retain their existing locations.
+This is an external plugin and is not bundled with Valley. An installed copy lives in the vault's `.valley/plugins/packages/github/surfing/` (installed from GitHub) or `.valley/plugins/packages/local/surfing/` (installed from a local package). Core and external installations run with the same sandbox, permissions, and SDK/IPC contract. Ordinary vault documents and saved plugin data (`.valley/plugins/data/surfing/`) keep their existing locations.
 
 ## Markdown embeds
 
