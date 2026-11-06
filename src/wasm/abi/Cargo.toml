@@ -1,0 +1,11 @@
+# Vendored copy of the Valley plugin module ABI crate (valley-plugin-abi, src/lib.rs verbatim).
+[package]
+name = "valley-plugin-abi"
+description = "The Valley plugin WebAssembly module ABI: export names, version and call frames. Copied verbatim into plugin-tools and the starter."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]

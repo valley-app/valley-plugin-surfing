@@ -1,6 +1,7 @@
 {
   "icon": "icon.svg",
   "main": "runtime/index.js",
+  "assets": "runtime/assets",
   "fileViews": {
     ".url": {
       "view": "surfing.url",
@@ -488,6 +489,25 @@
   "runtime": {
     "ui": "runtime/index.js",
     "backend": "runtime/backend.js",
+    "wasm": [
+      {
+        "id": "filters",
+        "path": "runtime/assets/filters.wasm",
+        "sha256": "696b8d53c8aa4f12e9040ab6217b2999ec27c6b34dbb9e5a43782f1e1c662e88",
+        "target": "backend",
+        "memoryPagesMax": 1024,
+        "exports": [
+          "filters_add",
+          "filters_build",
+          "filters_resources",
+          "filters_save",
+          "filters_load",
+          "filters_drop",
+          "filters_request",
+          "filters_cosmetics"
+        ]
+      }
+    ],
     "services": [
       {
         "id": "command.fetch",
@@ -4278,6 +4298,9 @@
     ],
     "largeDataOperations": [
       "workflow.execute"
+    ],
+    "backgroundOperations": [
+      "filter.build"
     ]
   },
   "permissions": {

@@ -2,3 +2,5 @@ node_modules/
 .plugin-build-*/
 *.log
 .DS_Store
+# cargo build output; the built module is runtime/assets/<id>.wasm
+src/wasm/target/

@@ -47,6 +47,7 @@ Provider names are case-insensitive. Add `height: 480` on a separate line for a 
 - `manifest.json`: readable English identity, version, and paired `author` / `authorUrl` arrays.
 - `config.json`: runtime entry points, permissions, contributions, and storage declarations.
 - `src/`: plugin interface and background engine.
+- `src/wasm/`: the ad-block kernel in Rust on Brave's `adblock` crate (MPL-2.0), built to `runtime/assets/filters.wasm` and declared in `config.json` under `runtime.wasm`. Requires Valley 1.0.0 or later.
 - `locales/`: English, German, Spanish, French, and Simplified Chinese catalogs.
 - `tests/`: package-owned checks using the portable SDK testkit.
 - `runtime/`: compiled installation artifact, including the package’s locale catalogs.
@@ -56,7 +57,7 @@ The package’s `manifest.name` and `manifest.description` catalog entries trans
 
 ## Development and releases
 
-Use Node 24.19.0 and npm 11.17.0. From this repository, run:
+Use Node 24.19.0 and npm 11.17.0, and Rust from `rustup` (the toolchain pinned in `rust-toolchain.toml`) with binaryen's `wasm-opt` at the version plugin-tools names. From this repository, run:
 
 ```sh
 npm ci

@@ -1,0 +1,4 @@
+# The host owns the module's memory: it imports env.memory with a maximum of memoryPagesMax pages (1,024 × 64 KiB,
+# config.json) and keeps a 256 KiB stack inside it.
+[build]
+rustflags = ["-Clink-arg=--import-memory", "-Clink-arg=--max-memory=67108864", "-Clink-arg=-zstack-size=262144"]

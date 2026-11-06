@@ -734,9 +734,9 @@ describe('web plugin', () => {
       await store.ensureProfileLoaded('default')
       internals.listRevisions.delete('saved:default:favorite')
       await expect(run('save-page', page)).rejects.toMatchObject(refused('REVISION_CONFLICT'))
-      backend.mockImplementation(async (method, input) => {
+      backend.mockImplementation(async (method, input, options) => {
         if (method === 'data.saved.list' || method === 'data.history.list') throw new Error('Backend unavailable')
-        return real(method, input)
+        return real(method, input, options)
       })
       internals.listLoads.clear()
       await expect(run('save-page', page)).rejects.toMatchObject({ ...refused('ACTION_UNAVAILABLE'), message: 'Backend unavailable' })
@@ -798,8 +798,8 @@ describe('web plugin', () => {
     try {
       await getStore()!.loadConfig()
       const call = vi.mocked(mock.api.backend.call), real = call.getMockImplementation()!
-      call.mockImplementationOnce(async (method, input) => {
-        if (method !== 'data.profiles.set') return real(method, input)
+      call.mockImplementationOnce(async (method, input, options) => {
+        if (method !== 'data.profiles.set') return real(method, input, options)
         throw new Error('Store briefly unavailable')
       })
       expect(await mock.api.commands.executeOwn('create-profile', { name: 'Lost' })).toMatchObject({ ok: false, error: { message: 'Store briefly unavailable' } })
@@ -809,9 +809,9 @@ describe('web plugin', () => {
       const created = await mock.api.commands.executeOwn('create-profile', { name: 'Fungi' })
       expect(created, JSON.stringify(created)).toMatchObject({ ok: true, value: { name: 'Fungi' } })
 
-      call.mockImplementation(async (method, input) => {
+      call.mockImplementation(async (method, input, options) => {
         if (method === 'data.profiles.set' || method === 'data.profiles.list') throw new Error('Store unavailable')
-        return real(method, input)
+        return real(method, input, options)
       })
       expect(await mock.api.commands.executeOwn('create-profile', { name: 'Lost again' })).toMatchObject({ ok: false })
       await getStore()!.flushProfiles()
