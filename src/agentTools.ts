@@ -203,10 +203,10 @@ function fromCli(parameters: Record<string, unknown>) {
 }
 
 export function registerBrowserAgentCommands(api: ValleyPluginApi, service: BrowserAutomationService): () => void {
-  const root = api.getState().vault?.path
+  const root = api.getState().realm?.path
   let active = true, revoked = false
-  const offVault = api.subscribeState(['vault'], ({ state }) => { if (state.vault?.path !== root) revoked = true })
-  const assertActive = () => { if (!active || revoked || api.getState().vault?.path !== root) throw Object.assign(new Error(uiText('surfing.error.closedTab')), { code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false }) }
+  const offRealm = api.subscribeState(['realm'], ({ state }) => { if (state.realm?.path !== root) revoked = true })
+  const assertActive = () => { if (!active || revoked || api.getState().realm?.path !== root) throw Object.assign(new Error(uiText('surfing.error.closedTab')), { code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false }) }
   const provider = browserTools(service)
   const actions: Record<string, (input: Record<string, unknown>) => Promise<{ ok: boolean; error?: string; data?: unknown }>> = {
     browser_list_tabs: () => service.list(), browser_open_tab: (input) => service.open(str(input.url)),
@@ -257,7 +257,7 @@ export function registerBrowserAgentCommands(api: ValleyPluginApi, service: Brow
       return tool.sideEffect === 'write' ? { value, revert: null } : value
     }
   }))
-  return () => { active = false; offVault(); offs.forEach((off) => off()) }
+  return () => { active = false; offRealm(); offs.forEach((off) => off()) }
 }
 
 export function surfingAgentTools(service: BrowserAutomationService, api?: ValleyPluginApi, fetcher?: WebFetcher): AgentToolProvider {

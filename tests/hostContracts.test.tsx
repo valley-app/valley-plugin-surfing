@@ -66,7 +66,7 @@ describe('package host contracts', () => {
         expect(await provider.invoke('capture', [{ surface }])).toMatchObject({ ok: true, value: { status: 'ready' } })
       }
       const main = bookmarks.find(provider => (provider.metadata as { surface: string }).surface === 'main_workspace')!
-      vi.spyOn(mock.api.vault, 'fileInfo').mockResolvedValue({} as never)
+      vi.spyOn(mock.api.realm, 'fileInfo').mockResolvedValue({} as never)
       for (const extension of Object.keys(config.fileViews)) {
         const path = `Archive/Canopy${extension}`
         const selected = JSON.stringify(['2026-09-30T12:00:00Z', 'GET', 'https://example.test/canopy'])

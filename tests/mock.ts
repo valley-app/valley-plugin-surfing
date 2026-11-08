@@ -96,7 +96,7 @@ export function createMockValleyApi(options: Parameters<typeof createApi>[0] = {
     const player: ExternalPlayer = {
       sourceId: options.id, sessionId: `external-${mediaPlayers.length}`,
       load: vi.fn(async descriptor => {
-        snapshot = { descriptor, target: { sessionId: player.sessionId, vaultGeneration: 1, sessionGeneration: 1, sourceGeneration: (snapshot?.target.sourceGeneration ?? 0) + 1 },
+        snapshot = { descriptor, target: { sessionId: player.sessionId, realmGeneration: 1, sessionGeneration: 1, sourceGeneration: (snapshot?.target.sourceGeneration ?? 0) + 1 },
           revision: 0, primary: false, effectiveGain: 1, sampleAgeMs: 0,
           state: { status: 'paused', positionSeconds: 0, durationSeconds: null, rate: 1, volume: 1, muted: false },
           capabilities: { seek: false, rate: false, next: false, previous: false } }

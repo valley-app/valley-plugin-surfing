@@ -267,9 +267,9 @@ export class WebStore {
     this.offTabs = api.data.dataset(TABS_DATASET).subscribe((event) => {
       void this.tabWrites.then(() => this.tabRevisions.delete(event.revision) ? undefined : this.claimTabs()).catch(() => {})
     })
-    const root = api.getState().vault?.path ?? null
+    const root = api.getState().realm?.path ?? null
     this.offState = api.subscribe(() => {
-      if ((api.getState().vault?.path ?? null) !== root) void this.dispose().catch(error => console.error(error))
+      if ((api.getState().realm?.path ?? null) !== root) void this.dispose().catch(error => console.error(error))
     })
   }
 

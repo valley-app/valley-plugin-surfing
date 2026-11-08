@@ -4318,7 +4318,7 @@
       "allowUserEndpoints": true
     },
     "storage": {
-      "vault": true,
+      "realm": true,
       "metadata": [
         "plugins/data/surfing"
       ]

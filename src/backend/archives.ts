@@ -13,7 +13,7 @@ export async function readArchiveChunk(api: PluginBackendApi, raw: unknown, canc
   cancellation.throwIfAborted()
   let handle: string | undefined
   try {
-    const grant = await api.storage.open({ area: 'vault', path: input.relPath, kind: 'file', mode: 'read' })
+    const grant = await api.storage.open({ area: 'realm', path: input.relPath, kind: 'file', mode: 'read' })
     handle = grant.handle
     cancellation.throwIfAborted()
     const location = { handle, path: '' }

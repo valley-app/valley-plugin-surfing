@@ -675,8 +675,8 @@ describe('web plugin', () => {
     } finally { dispose() }
   })
 
-  it('refuses tab and profile writes after a vault switch as not-applied before any effect', async () => {
-    const mock = createMockValleyApi({ manifest: { id: 'surfing' }, vault: { path: '/mock/forest', name: 'forest', displayName: 'forest' } })
+  it('refuses tab and profile writes after a realm switch as not-applied before any effect', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' }, realm: { path: '/mock/forest', name: 'forest', displayName: 'forest' } })
     const dispose = register(mock.api)
     try {
       const command = (id: string) => mock.commands.find(entry => entry.id === id || entry.id.endsWith(`:${id}`))!
@@ -686,7 +686,7 @@ describe('web plugin', () => {
       const { instanceId } = opened.value as { instanceId: string }
       await mock.api.commands.executeOwn('list-profiles', {})
       const store = getStore()!, effects = [vi.spyOn(store, 'deleteProfile'), vi.spyOn(store, 'clearHistory'), vi.spyOn(store, 'closeTab')]
-      mock.emitState({ vault: { path: '/mock/other', name: 'other', displayName: 'other' } })
+      mock.emitState({ realm: { path: '/mock/other', name: 'other', displayName: 'other' } })
       const refusal = { code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false }
       await expect(run('close', { instanceId }), 'close').rejects.toMatchObject(refusal)
       await expect(run('delete-profile', { profileId: 'default' }), 'delete-profile').rejects.toMatchObject(refusal)
@@ -922,16 +922,16 @@ describe('web plugin', () => {
     } finally { dispose() }
   })
 
-  it('refuses embed provider undo and redo after a vault switch before reaching any backend', async () => {
-    const mock = createMockValleyApi({ manifest: { id: 'surfing' }, vault: { path: '/mock/forest', name: 'forest', displayName: 'forest' } })
+  it('refuses embed provider undo and redo after a realm switch before reaching any backend', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'surfing' }, realm: { path: '/mock/forest', name: 'forest', displayName: 'forest' } })
     const dispose = register(mock.api)
     try {
       const command = mock.commands.find(entry => entry.id === 'create-embed-provider' || entry.id.endsWith(':create-embed-provider'))!
       const created = await command.run(undefined, { caller: 'agent' }) as unknown as { revert: { run(): Promise<void>; reapply(): Promise<void> } }
       const call = vi.spyOn(mock.api.backend, 'call')
       const after = await mock.api.data.files.readText('embeds/custom/provider.json')
-      mock.emitState({ vault: { path: '/mock/other', name: 'other', displayName: 'other' } })
-      const refusal = { code: 'OWNER_CHANGED', outcome: 'not-applied', message: 'The vault changed since this action ran, so it can’t be undone or redone here.' }
+      mock.emitState({ realm: { path: '/mock/other', name: 'other', displayName: 'other' } })
+      const refusal = { code: 'OWNER_CHANGED', outcome: 'not-applied', message: 'The realm changed since this action ran, so it can’t be undone or redone here.' }
       await expect(created.revert.run()).rejects.toMatchObject(refusal)
       await expect(created.revert.reapply()).rejects.toMatchObject(refusal)
       expect(call).not.toHaveBeenCalled()
@@ -1638,7 +1638,7 @@ describe('clipping document revisions', () => {
   const disposers: Array<() => Promise<void>> = []
   const fixture = (existing = true) => {
     const mock = createMockValleyApi({
-      vault: { path: '/mock/forest', name: 'forest', displayName: 'forest' },
+      realm: { path: '/mock/forest', name: 'forest', displayName: 'forest' },
       files: existing ? { [path]: prior } : {}
     })
     initRuntime(mock.api)
@@ -1663,48 +1663,48 @@ describe('clipping document revisions', () => {
     await expect(observe()).rejects.toMatchObject({ code: 'TARGET_NOT_FOUND', outcome: 'not-applied', retryable: false, message: 'Tab closed' })
     vi.mocked(mock.store.browserReadHtml).mockResolvedValue({ ok: false, error: 'Page unreadable' } as never)
     await expect(observe()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied', retryable: false })
-    expect(mock.api.vault.writeTextDocumentGuarded).not.toHaveBeenCalled()
-    expect(mock.api.vault.createTextDocumentGuarded).not.toHaveBeenCalled()
+    expect(mock.api.realm.writeTextDocumentGuarded).not.toHaveBeenCalled()
+    expect(mock.api.realm.createTextDocumentGuarded).not.toHaveBeenCalled()
   })
 
   it('uses editor snapshots and alternates exact undo/redo receipts without disk-only reads', async () => {
     const mock = fixture()
-    const disk = vi.spyOn(mock.api.vault, 'readFile').mockRejectedValue(new Error('Disk-only read'))
-    const read = vi.spyOn(mock.api.vault, 'readTextDocument')
+    const disk = vi.spyOn(mock.api.realm, 'readFile').mockRejectedValue(new Error('Disk-only read'))
+    const read = vi.spyOn(mock.api.realm, 'readTextDocument')
     expect(await mock.clip()).toMatchObject({ ok: true, value: { relPath: path } })
-    const content = vi.mocked(mock.api.vault.writeTextDocumentGuarded).mock.calls[0][1]
+    const content = vi.mocked(mock.api.realm.writeTextDocumentGuarded).mock.calls[0][1]
     expect(content).toContain('woodland habitats')
     expect(disk).not.toHaveBeenCalled()
     expect(read).toHaveBeenCalledOnce()
     await mock.busUndo[0].undo()
-    expect(vi.mocked(mock.api.vault.writeTextDocumentGuarded).mock.calls.at(-1)?.[1]).toBe(prior)
+    expect(vi.mocked(mock.api.realm.writeTextDocumentGuarded).mock.calls.at(-1)?.[1]).toBe(prior)
     await mock.busUndo[0].redo!()
-    expect(vi.mocked(mock.api.vault.writeTextDocumentGuarded).mock.calls.at(-1)?.[1]).toBe(content)
+    expect(vi.mocked(mock.api.realm.writeTextDocumentGuarded).mock.calls.at(-1)?.[1]).toBe(content)
     await mock.busUndo[0].undo()
     expect(read).toHaveBeenCalledOnce()
-    expect(mock.api.vault.writeFile).not.toHaveBeenCalled()
+    expect(mock.api.realm.writeFile).not.toHaveBeenCalled()
   })
 
   it.each(['error', 'missing'] as const)('does not overwrite when the editor snapshot is %s', async outcome => {
     const mock = fixture()
-    const read = vi.spyOn(mock.api.vault, 'readTextDocument')
+    const read = vi.spyOn(mock.api.realm, 'readTextDocument')
     if (outcome === 'error') read.mockRejectedValue(new Error('Read failed'))
     else read.mockResolvedValue(null)
     expect((await mock.clip()).ok).toBe(false)
-    expect(mock.api.vault.writeTextDocumentGuarded).not.toHaveBeenCalled()
-    expect(mock.api.vault.writeFileGuarded).not.toHaveBeenCalled()
-    expect(await mock.api.vault.readFile(path)).toBe(prior)
+    expect(mock.api.realm.writeTextDocumentGuarded).not.toHaveBeenCalled()
+    expect(mock.api.realm.writeFileGuarded).not.toHaveBeenCalled()
+    expect(await mock.api.realm.readFile(path)).toBe(prior)
   })
 
   it('rejects a change after capture without overwriting it', async () => {
     const mock = fixture()
-    const write = vi.mocked(mock.api.vault.writeTextDocumentGuarded).getMockImplementation()!
-    vi.mocked(mock.api.vault.writeTextDocumentGuarded).mockImplementationOnce(async (...args) => {
-      await mock.api.vault.writeFile(path, 'Newer editor draft')
+    const write = vi.mocked(mock.api.realm.writeTextDocumentGuarded).getMockImplementation()!
+    vi.mocked(mock.api.realm.writeTextDocumentGuarded).mockImplementationOnce(async (...args) => {
+      await mock.api.realm.writeFile(path, 'Newer editor draft')
       return write(...args)
     })
     await expect(mock.runClip()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
-    expect(await mock.api.vault.readFile(path)).toBe('Newer editor draft')
+    expect(await mock.api.realm.readFile(path)).toBe('Newer editor draft')
     expect(mock.busUndo).toHaveLength(0)
   })
 
@@ -1714,19 +1714,19 @@ describe('clipping document revisions', () => {
     await expect(mock.runClip()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied' })
     vi.mocked(mock.store.browserReadHtml).mockResolvedValueOnce({ ok: false, error: 'Page unavailable' })
     await expect(mock.runClip()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied' })
-    expect(mock.api.vault.writeTextDocumentGuarded).not.toHaveBeenCalled()
-    vi.mocked(mock.api.vault.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'stale' })
+    expect(mock.api.realm.writeTextDocumentGuarded).not.toHaveBeenCalled()
+    vi.mocked(mock.api.realm.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'stale' })
     await expect(mock.runClip()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
-    vi.mocked(mock.api.vault.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
+    vi.mocked(mock.api.realm.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
     await expect(mock.runClip()).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown' })
-    expect(await mock.api.vault.readFile(path)).toBe(prior)
+    expect(await mock.api.realm.readFile(path)).toBe(prior)
     expect(mock.busUndo).toHaveLength(0)
   })
 
-  it('reports clip undo/redo refusals before any vault effect as not-applied and unverified replays as unknown', async () => {
+  it('reports clip undo/redo refusals before any realm effect as not-applied and unverified replays as unknown', async () => {
     const mock = fixture()
     await mock.clip()
-    const write = vi.mocked(mock.api.vault.writeTextDocumentGuarded)
+    const write = vi.mocked(mock.api.realm.writeTextDocumentGuarded)
     write.mockResolvedValueOnce({ ok: false, reason: 'stale' })
     await expect(mock.busUndo[0].undo()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied', retryable: false })
     await expect(mock.busUndo[0].undo()).rejects.toMatchObject({ code: 'ACTION_UNAVAILABLE', outcome: 'not-applied', retryable: false })
@@ -1735,21 +1735,21 @@ describe('clipping document revisions', () => {
 
     const unverified = fixture()
     await unverified.clip()
-    vi.mocked(unverified.api.vault.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
+    vi.mocked(unverified.api.realm.writeTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
     await expect(unverified.busUndo[0].undo()).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown' })
 
     const created = fixture(false)
     await created.clip()
-    vi.mocked(created.api.vault.trashTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'conflict', current: null })
+    vi.mocked(created.api.realm.trashTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'conflict', current: null })
     await expect(created.busUndo[0].undo()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
     const recreated = fixture(false)
     await recreated.clip()
     await recreated.busUndo[0].undo()
-    vi.mocked(recreated.api.vault.createTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'conflict' })
+    vi.mocked(recreated.api.realm.createTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'conflict' })
     await expect(recreated.busUndo[0].redo!()).rejects.toMatchObject({ code: 'REVISION_CONFLICT', outcome: 'not-applied' })
     const lost = fixture(false)
     await lost.clip()
-    vi.mocked(lost.api.vault.trashTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
+    vi.mocked(lost.api.realm.trashTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'error' })
     await expect(lost.busUndo[0].undo()).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown' })
   })
 
@@ -1757,112 +1757,112 @@ describe('clipping document revisions', () => {
     const mock = fixture()
     await mock.clip()
     if (direction === 'redo') await mock.busUndo[0].undo()
-    const content = await mock.api.vault.readFile(path)
-    await mock.api.vault.writeFile(path, `${content}new`)
-    await mock.api.vault.writeFile(path, content)
-    const read = vi.spyOn(mock.api.vault, 'readTextDocument')
+    const content = await mock.api.realm.readFile(path)
+    await mock.api.realm.writeFile(path, `${content}new`)
+    await mock.api.realm.writeFile(path, content)
+    const read = vi.spyOn(mock.api.realm, 'readTextDocument')
     await expect(mock.busUndo[0][direction]!()).rejects.toThrow()
     expect(read).not.toHaveBeenCalled()
-    expect(await mock.api.vault.readFile(path)).toBe(content)
+    expect(await mock.api.realm.readFile(path)).toBe(content)
   })
 
   it('preserves a committed write with newer typing and withholds undo authority', async () => {
     const mock = fixture()
-    const write = vi.mocked(mock.api.vault.writeTextDocumentGuarded).getMockImplementation()!
-    vi.mocked(mock.api.vault.writeTextDocumentGuarded).mockImplementationOnce(async (...args) => {
+    const write = vi.mocked(mock.api.realm.writeTextDocumentGuarded).getMockImplementation()!
+    vi.mocked(mock.api.realm.writeTextDocumentGuarded).mockImplementationOnce(async (...args) => {
       const result = await write(...args)
       if (!result.ok) return result
-      await mock.api.vault.writeFile(path, `${args[1]}Newer typing`)
+      await mock.api.realm.writeFile(path, `${args[1]}Newer typing`)
       return { ok: true, revisionToken: null, editorConflict: true }
     })
     expect((await mock.clip()).ok).toBe(true)
     await expect(mock.busUndo[0].undo()).rejects.toThrow()
-    expect(await mock.api.vault.readFile(path)).toContain('Newer typing')
+    expect(await mock.api.realm.readFile(path)).toContain('Newer typing')
   })
 
   it('creates only into an absent path and never overwrites an occupied redo target', async () => {
     const mock = fixture(false)
     expect((await mock.clip()).ok).toBe(true)
-    expect(mock.api.vault.createTextDocumentGuarded).toHaveBeenCalledWith(path, expect.any(String))
+    expect(mock.api.realm.createTextDocumentGuarded).toHaveBeenCalledWith(path, expect.any(String))
     await mock.busUndo[0].undo()
-    await mock.api.vault.writeFile(path, 'Replacement')
+    await mock.api.realm.writeFile(path, 'Replacement')
     await expect(mock.busUndo[0].redo!()).rejects.toThrow()
-    expect(await mock.api.vault.readFile(path)).toBe('Replacement')
+    expect(await mock.api.realm.readFile(path)).toBe('Replacement')
   })
 
   it('alternates creation and guarded trash using returned receipts without rereading', async () => {
     const mock = fixture(false)
-    const read = vi.spyOn(mock.api.vault, 'readTextDocument')
+    const read = vi.spyOn(mock.api.realm, 'readTextDocument')
     expect((await mock.clip()).ok).toBe(true)
-    const content = await mock.api.vault.readFile(path)
+    const content = await mock.api.realm.readFile(path)
     await mock.busUndo[0].undo()
     await mock.busUndo[0].redo!()
-    expect(await mock.api.vault.readFile(path)).toBe(content)
+    expect(await mock.api.realm.readFile(path)).toBe(content)
     await mock.busUndo[0].undo()
-    expect(mock.api.vault.createTextDocumentGuarded).toHaveBeenCalledTimes(2)
-    expect(mock.api.vault.trashTextDocumentGuarded).toHaveBeenCalledTimes(2)
+    expect(mock.api.realm.createTextDocumentGuarded).toHaveBeenCalledTimes(2)
+    expect(mock.api.realm.trashTextDocumentGuarded).toHaveBeenCalledTimes(2)
     expect(read).not.toHaveBeenCalled()
     expect(mock.driverCalls.some(call => call.method === 'deleteMarkdown')).toBe(false)
   })
 
   it('preserves edits made before a create acknowledgement without renewing undo authority', async () => {
     const mock = fixture(false)
-    const create = vi.mocked(mock.api.vault.createTextDocumentGuarded).getMockImplementation()!
-    vi.mocked(mock.api.vault.createTextDocumentGuarded).mockImplementationOnce(async (...args) => {
+    const create = vi.mocked(mock.api.realm.createTextDocumentGuarded).getMockImplementation()!
+    vi.mocked(mock.api.realm.createTextDocumentGuarded).mockImplementationOnce(async (...args) => {
       const result = await create(...args)
-      await mock.api.vault.writeFile(path, `${args[1]}Newer typing`)
+      await mock.api.realm.writeFile(path, `${args[1]}Newer typing`)
       return result
     })
     expect((await mock.clip()).ok).toBe(true)
     await expect(mock.busUndo[0].undo()).rejects.toThrow()
-    expect(await mock.api.vault.readFile(path)).toContain('Newer typing')
+    expect(await mock.api.realm.readFile(path)).toContain('Newer typing')
   })
 
   it('does not fall back to deletion or retry when the host rejects a dirty editor', async () => {
     const mock = fixture(false)
     await mock.clip()
-    const content = await mock.api.vault.readFile(path)
-    vi.mocked(mock.api.vault.trashTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'stale' })
+    const content = await mock.api.realm.readFile(path)
+    vi.mocked(mock.api.realm.trashTextDocumentGuarded).mockResolvedValueOnce({ ok: false, reason: 'stale' })
     await expect(mock.busUndo[0].undo()).rejects.toThrow()
     await expect(mock.busUndo[0].undo()).rejects.toThrow()
-    expect(mock.api.vault.trashTextDocumentGuarded).toHaveBeenCalledOnce()
-    expect(await mock.api.vault.readFile(path)).toBe(content)
+    expect(mock.api.realm.trashTextDocumentGuarded).toHaveBeenCalledOnce()
+    expect(await mock.api.realm.readFile(path)).toBe(content)
     expect(mock.driverCalls.some(call => call.method === 'deleteMarkdown')).toBe(false)
   })
 
   it.each([true, false])('does not replay committed trash with recoverySaved=%s', async recoverySaved => {
     const mock = fixture(false)
     await mock.clip()
-    const trash = vi.mocked(mock.api.vault.trashTextDocumentGuarded).getMockImplementation()!
-    vi.mocked(mock.api.vault.trashTextDocumentGuarded).mockImplementationOnce(async (...args) => {
+    const trash = vi.mocked(mock.api.realm.trashTextDocumentGuarded).getMockImplementation()!
+    vi.mocked(mock.api.realm.trashTextDocumentGuarded).mockImplementationOnce(async (...args) => {
       const result = await trash(...args)
       return result.ok ? { ...result, editorConflict: true, recoverySaved } : result
     })
     await expect(mock.busUndo[0].undo()).rejects.toThrow('file was deleted')
     await expect(mock.busUndo[0].undo()).rejects.toThrow()
     await expect(mock.busUndo[0].redo!()).rejects.toThrow()
-    expect(mock.api.vault.trashTextDocumentGuarded).toHaveBeenCalledOnce()
-    expect(mock.api.vault.createTextDocumentGuarded).toHaveBeenCalledOnce()
+    expect(mock.api.realm.trashTextDocumentGuarded).toHaveBeenCalledOnce()
+    expect(mock.api.realm.createTextDocumentGuarded).toHaveBeenCalledOnce()
   })
 
   it('does not retry an uncertain physical trash result', async () => {
     const mock = fixture(false)
     await mock.clip()
-    const trash = vi.mocked(mock.api.vault.trashTextDocumentGuarded).getMockImplementation()!
-    vi.mocked(mock.api.vault.trashTextDocumentGuarded).mockImplementationOnce(async (...args) => { await trash(...args); throw new Error('Acknowledgement lost') })
+    const trash = vi.mocked(mock.api.realm.trashTextDocumentGuarded).getMockImplementation()!
+    vi.mocked(mock.api.realm.trashTextDocumentGuarded).mockImplementationOnce(async (...args) => { await trash(...args); throw new Error('Acknowledgement lost') })
     await expect(mock.busUndo[0].undo()).rejects.toThrow('Acknowledgement lost')
     await expect(mock.busUndo[0].undo()).rejects.toThrow()
-    expect(mock.api.vault.trashTextDocumentGuarded).toHaveBeenCalledOnce()
+    expect(mock.api.realm.trashTextDocumentGuarded).toHaveBeenCalledOnce()
   })
 
   it('joins a held document read on disposal and stops its subsequent write', async () => {
     const mock = fixture()
-    const read = mock.api.vault.readTextDocument
+    const read = mock.api.realm.readTextDocument
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
-    vi.spyOn(mock.api.vault, 'readTextDocument').mockImplementationOnce(async target => { const value = await read(target); await held; return value })
+    vi.spyOn(mock.api.realm, 'readTextDocument').mockImplementationOnce(async target => { const value = await read(target); await held; return value })
     const clipping = mock.clip()
-    await vi.waitFor(() => expect(mock.api.vault.readTextDocument).toHaveBeenCalled())
+    await vi.waitFor(() => expect(mock.api.realm.readTextDocument).toHaveBeenCalled())
     const ended = vi.fn()
     const closing = mock.unregister().then(ended)
     try {
@@ -1871,51 +1871,51 @@ describe('clipping document revisions', () => {
       release()
       await expect(clipping).resolves.toMatchObject({ ok: false })
       await closing
-      expect(mock.api.vault.writeTextDocumentGuarded).not.toHaveBeenCalled()
+      expect(mock.api.realm.writeTextDocumentGuarded).not.toHaveBeenCalled()
     } finally { release() }
   })
 
-  it('revokes held work after the vault returns A to B to A', async () => {
+  it('revokes held work after the realm returns A to B to A', async () => {
     const mock = fixture()
-    const read = mock.api.vault.readTextDocument
+    const read = mock.api.realm.readTextDocument
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
-    vi.spyOn(mock.api.vault, 'readTextDocument').mockImplementationOnce(async target => { const value = await read(target); await held; return value })
+    vi.spyOn(mock.api.realm, 'readTextDocument').mockImplementationOnce(async target => { const value = await read(target); await held; return value })
     const clipping = mock.clip()
-    await vi.waitFor(() => expect(mock.api.vault.readTextDocument).toHaveBeenCalled())
-    const origin = mock.api.getState().vault
-    mock.emitState({ vault: { path: '/mock/other', name: 'other', displayName: 'other' } })
-    mock.emitState({ vault: origin })
+    await vi.waitFor(() => expect(mock.api.realm.readTextDocument).toHaveBeenCalled())
+    const origin = mock.api.getState().realm
+    mock.emitState({ realm: { path: '/mock/other', name: 'other', displayName: 'other' } })
+    mock.emitState({ realm: origin })
     release()
     await expect(clipping).resolves.toMatchObject({ ok: false })
-    expect(mock.api.vault.writeTextDocumentGuarded).not.toHaveBeenCalled()
+    expect(mock.api.realm.writeTextDocumentGuarded).not.toHaveBeenCalled()
   })
 
   it('does not dispatch the same undo twice while its write is pending', async () => {
     const mock = fixture()
     await mock.clip()
-    const write = vi.mocked(mock.api.vault.writeTextDocumentGuarded).getMockImplementation()!
+    const write = vi.mocked(mock.api.realm.writeTextDocumentGuarded).getMockImplementation()!
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
-    vi.mocked(mock.api.vault.writeTextDocumentGuarded).mockImplementationOnce(async (...args) => { await held; return write(...args) })
+    vi.mocked(mock.api.realm.writeTextDocumentGuarded).mockImplementationOnce(async (...args) => { await held; return write(...args) })
     const undoing = mock.busUndo[0].undo()
-    await vi.waitFor(() => expect(mock.api.vault.writeTextDocumentGuarded).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(mock.api.realm.writeTextDocumentGuarded).toHaveBeenCalledTimes(2))
     try {
       await expect(mock.busUndo[0].undo()).rejects.toThrow()
       release()
       await undoing
-      expect(mock.api.vault.writeTextDocumentGuarded).toHaveBeenCalledTimes(2)
+      expect(mock.api.realm.writeTextDocumentGuarded).toHaveBeenCalledTimes(2)
     } finally { release() }
   })
 
   it('joins an accepted write through its known result after disposal begins', async () => {
     const mock = fixture()
-    const write = vi.mocked(mock.api.vault.writeTextDocumentGuarded).getMockImplementation()!
+    const write = vi.mocked(mock.api.realm.writeTextDocumentGuarded).getMockImplementation()!
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
-    vi.mocked(mock.api.vault.writeTextDocumentGuarded).mockImplementationOnce(async (...args) => { await held; return write(...args) })
+    vi.mocked(mock.api.realm.writeTextDocumentGuarded).mockImplementationOnce(async (...args) => { await held; return write(...args) })
     const clipping = mock.clip()
-    await vi.waitFor(() => expect(mock.api.vault.writeTextDocumentGuarded).toHaveBeenCalled())
+    await vi.waitFor(() => expect(mock.api.realm.writeTextDocumentGuarded).toHaveBeenCalled())
     const ended = vi.fn()
     const closing = mock.unregister().then(ended)
     try {
@@ -1925,7 +1925,7 @@ describe('clipping document revisions', () => {
       await expect(clipping).resolves.toMatchObject({ ok: true })
       await closing
       await expect(mock.busUndo[0].undo()).rejects.toThrow()
-      expect(mock.api.vault.writeTextDocumentGuarded).toHaveBeenCalledOnce()
+      expect(mock.api.realm.writeTextDocumentGuarded).toHaveBeenCalledOnce()
     } finally { release() }
   })
 })

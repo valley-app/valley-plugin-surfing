@@ -124,7 +124,7 @@ const ShortcutEditor: PluginFileView = ({ relPath, tab, mountedView }) => {
     announceDraft()
     setLoading(true)
     try {
-      const next = await api.vault.readFileBaseline(relPath)
+      const next = await api.realm.readFileBaseline(relPath)
       if (!state.current.active || revision !== state.current.revision) return
       if (!next) throw new Error(uiText('surfing.shortcut.readError'))
       setFile(next)
@@ -143,7 +143,7 @@ const ShortcutEditor: PluginFileView = ({ relPath, tab, mountedView }) => {
   React.useEffect(() => {
     state.current.active = true
     void load()
-    const off = api.vault.onChanged(info => {
+    const off = api.realm.onChanged(info => {
       if (!info.full && !info.changes.some(change => change.relPath === relPath)) return
       if (state.current.saving || state.current.fences) { state.current.refresh = true; return }
       if (!state.current.dirty) void load()
@@ -155,7 +155,7 @@ const ShortcutEditor: PluginFileView = ({ relPath, tab, mountedView }) => {
     const view = mounted.current
     if (!view) return
     const snapshot = () => ({ revision: String(state.current.revision), dirty: state.current.dirty, readiness: state.current.uncertain ? 'uncertain' as const : state.current.saving ? 'saving' as const : state.current.loaded ? 'ready' as const : 'loading' as const })
-    return api.vault.editors.register(view, {
+    return api.realm.editors.register(view, {
       getSnapshot: snapshot,
       subscribe: listener => { draftListeners.current.add(listener); return () => { draftListeners.current.delete(listener) } },
       prepare: (expected, request) => {
@@ -199,8 +199,8 @@ const ShortcutEditor: PluginFileView = ({ relPath, tab, mountedView }) => {
       await validateBeforeEffect?.()
       if (!state.current.active || state.current.fences || String(state.current.revision) !== revision) throw Object.assign(new Error('The shortcut draft changed before saving.'), { outcome: 'not-applied' })
       const result = mountedView
-        ? await api.vault.editors.save(mountedView, content, file.baseline, revision)
-        : await api.vault.writeFileGuarded(relPath, content, file.baseline)
+        ? await api.realm.editors.save(mountedView, content, file.baseline, revision)
+        : await api.realm.writeFileGuarded(relPath, content, file.baseline)
       if (!state.current.active) { if (validateBeforeEffect) throw new Error('The shortcut view disappeared after its save was dispatched.'); return }
       if (!result.ok) {
         setError(uiText(result.reason === 'conflict' ? 'surfing.shortcut.conflict' : 'surfing.shortcut.saveError'))

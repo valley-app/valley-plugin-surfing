@@ -53,7 +53,7 @@ function useArchive<T>(relPath: string, parse: (bytes: Uint8Array) => T) {
       }
     }
     void read()
-    const off = api.vault.onChanged(info => {
+    const off = api.realm.onChanged(info => {
       if (info.full || info.changes.some(change => change.relPath === relPath)) void read()
     })
     return () => { active = false; controller?.abort(); off() }

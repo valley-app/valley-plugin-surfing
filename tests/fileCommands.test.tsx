@@ -33,9 +33,9 @@ describe('exact Surfing file owners', () => {
     const rendered = render(<><UrlFileView relPath={path} mountedView={fixture.target} /><UrlFileView relPath={path} mountedView={other} /></>)
     await waitFor(async () => expect((await fixture.inspect()).view.loading).toBe(false))
     const initial = await fixture.inspect()
-    await fixture.invoke({ type: 'draft', value: 'https://new.test/über' }); expect(screen.getAllByRole('textbox', { name: 'Shortcut URL' })[0]).toHaveValue('https://new.test/über'); expect((await fixture.inspect(other)).view.draft).toBe('https://example.test/old'); expect(await fixture.mock.api.vault.readFile(path)).toBe(original)
+    await fixture.invoke({ type: 'draft', value: 'https://new.test/über' }); expect(screen.getAllByRole('textbox', { name: 'Shortcut URL' })[0]).toHaveValue('https://new.test/über'); expect((await fixture.inspect(other)).view.draft).toBe('https://example.test/old'); expect(await fixture.mock.api.realm.readFile(path)).toBe(original)
     await expect(fixture.invoke({ type: 'save' }, 'save', {}, initial.revision)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' })
-    await fixture.invoke({ type: 'save' }, 'save'); expect(await fixture.mock.api.vault.readFile(path)).toBe(original.replace('https://example.test/old', 'https://new.test/über')); expect(fixture.mock.api.vault.editors.save).toHaveBeenCalledWith(fixture.target, expect.stringContaining('https://new.test/über'), expect.any(Object), expect.any(String))
+    await fixture.invoke({ type: 'save' }, 'save'); expect(await fixture.mock.api.realm.readFile(path)).toBe(original.replace('https://example.test/old', 'https://new.test/über')); expect(fixture.mock.api.realm.editors.save).toHaveBeenCalledWith(fixture.target, expect.stringContaining('https://new.test/über'), expect.any(Object), expect.any(String))
     await fixture.invoke({ type: 'draft', value: 'https://discard.test' }); await fixture.invoke({ type: 'reload' }); expect((await fixture.inspect()).view.draft).toBe('https://new.test/über')
     rendered.unmount(); await expect(fixture.inspect()).rejects.toMatchObject({ code: 'TARGET_REPLACED' })
   })
@@ -44,9 +44,9 @@ describe('exact Surfing file owners', () => {
     const path = 'Links/Website.url', original = '[InternetShortcut]\nURL=https://example.test\n', fixture = setup({ [path]: original }, path)
     render(<UrlFileView relPath={path} mountedView={fixture.target} />); await waitFor(async () => expect((await fixture.inspect()).view.loading).toBe(false))
     await expect(fixture.invoke({ type: 'draft', value: 'https://denied.test' }, 'control', { validateBeforeRun: async () => false })).rejects.toMatchObject({ code: 'PERMISSION_DENIED', outcome: 'not-applied' })
-    await fixture.invoke({ type: 'draft', value: 'file:///tmp/not-web' }); await expect(fixture.invoke({ type: 'save' }, 'save')).rejects.toMatchObject({ outcome: 'not-applied' }); expect(await fixture.mock.api.vault.readFile(path)).toBe(original)
-    await fixture.invoke({ type: 'draft', value: 'https://retained.test' }); vi.mocked(fixture.mock.api.vault.editors.save).mockRejectedValueOnce(new Error('Lost acknowledgement'))
-    await expect(fixture.invoke({ type: 'save' }, 'save')).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown', retryable: false }); expect((await fixture.inspect()).view).toMatchObject({ draft: 'https://retained.test', dirty: true }); expect(await fixture.mock.api.vault.readFile(path)).toBe(original)
+    await fixture.invoke({ type: 'draft', value: 'file:///tmp/not-web' }); await expect(fixture.invoke({ type: 'save' }, 'save')).rejects.toMatchObject({ outcome: 'not-applied' }); expect(await fixture.mock.api.realm.readFile(path)).toBe(original)
+    await fixture.invoke({ type: 'draft', value: 'https://retained.test' }); vi.mocked(fixture.mock.api.realm.editors.save).mockRejectedValueOnce(new Error('Lost acknowledgement'))
+    await expect(fixture.invoke({ type: 'save' }, 'save')).rejects.toMatchObject({ code: 'EFFECT_UNVERIFIED', outcome: 'unknown', retryable: false }); expect((await fixture.inspect()).view).toMatchObject({ draft: 'https://retained.test', dirty: true }); expect(await fixture.mock.api.realm.readFile(path)).toBe(original)
   })
 
   it('searches, pages, selects and reloads read-only HAR requests without replaying them', async () => {
@@ -59,7 +59,7 @@ describe('exact Surfing file owners', () => {
     await fixture.invoke({ type: 'select', value: row.key }); expect(screen.getByText('Body 100')).toBeInTheDocument(); expect((await fixture.inspect()).view.selected).toBe(row.key)
     const calls = vi.mocked(fixture.mock.api.backend.callOperation).mock.calls.length
     await fixture.invoke({ type: 'reload' }); await waitFor(() => expect(fixture.mock.api.backend.callOperation).toHaveBeenCalledTimes(calls + 1)); await waitFor(async () => expect((await fixture.inspect()).view.loading).toBe(false))
-    expect(await fixture.mock.api.vault.readFile(path)).toBe(original); expect(fixture.mock.api.drivers.browser.execute).not.toHaveBeenCalled(); expect(fixture.mock.api.vault.writeFileGuarded).not.toHaveBeenCalled()
+    expect(await fixture.mock.api.realm.readFile(path)).toBe(original); expect(fixture.mock.api.drivers.browser.execute).not.toHaveBeenCalled(); expect(fixture.mock.api.realm.writeFileGuarded).not.toHaveBeenCalled()
   })
 
   it('scrolls only a loaded offline MHTML anchor and reloads the owning archive', async () => {
@@ -70,7 +70,7 @@ describe('exact Surfing file owners', () => {
     fireEvent.load(frame); expect((await fixture.inspect()).view.anchors).toEqual(['target'])
     await fixture.invoke({ type: 'anchor', value: 'target' }); expect(scroll).toHaveBeenCalledOnce(); expect((await fixture.inspect()).view.currentAnchor).toBe('target')
     await expect(fixture.invoke({ type: 'anchor', value: 'https://external.test' })).rejects.toMatchObject({ outcome: 'not-applied' }); expect(scroll).toHaveBeenCalledOnce()
-    const calls = vi.mocked(fixture.mock.api.backend.callOperation).mock.calls.length; await fixture.invoke({ type: 'reload' }); await waitFor(() => expect(fixture.mock.api.backend.callOperation).toHaveBeenCalledTimes(calls + 1)); expect(await fixture.mock.api.vault.readFile(path)).toBe(original)
+    const calls = vi.mocked(fixture.mock.api.backend.callOperation).mock.calls.length; await fixture.invoke({ type: 'reload' }); await waitFor(() => expect(fixture.mock.api.backend.callOperation).toHaveBeenCalledTimes(calls + 1)); expect(await fixture.mock.api.realm.readFile(path)).toBe(original)
     expect(frame).toHaveAttribute('sandbox', 'allow-same-origin'); rendered.unmount()
   })
 

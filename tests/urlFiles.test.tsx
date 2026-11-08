@@ -37,20 +37,20 @@ describe('Internet shortcut files', () => {
     await waitFor(() => inputs.forEach(input => expect(input).not.toBeDisabled()))
     fireEvent.change(inputs[0], { target: { value: 'https://first.test/fern' } })
     fireEvent.change(inputs[1], { target: { value: 'https://second.test/moss' } })
-    await expect(mock.api.vault.writeFile(path, 'External overwrite')).rejects.toMatchObject({ code: 'DIRTY_EDITOR' })
+    await expect(mock.api.realm.writeFile(path, 'External overwrite')).rejects.toMatchObject({ code: 'DIRTY_EDITOR' })
     fireEvent.click(screen.getAllByRole('button', { name: 'Save URL' })[0])
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not save')
-    expect(await mock.api.vault.readFile(path)).toBe(original)
+    expect(await mock.api.realm.readFile(path)).toBe(original)
     expect(inputs[0]).toHaveValue('https://first.test/fern')
     expect(inputs[1]).toHaveValue('https://second.test/moss')
     fireEvent.click(screen.getAllByRole('button', { name: 'Reload file' })[1])
     await waitFor(() => expect(inputs[1]).toHaveValue(readShortcutUrl(original)))
     fireEvent.click(screen.getAllByRole('button', { name: 'Save URL' })[0])
     await waitFor(() => expect(inputs[0]).not.toBeDisabled())
-    await waitFor(async () => expect(await mock.api.vault.readFile(path)).toBe(original.replace(readShortcutUrl(original), 'https://first.test/fern')))
-    expect(mock.api.vault.editors.save).toHaveBeenLastCalledWith(first, expect.stringContaining('https://first.test/fern'), expect.any(Object), expect.any(String))
+    await waitFor(async () => expect(await mock.api.realm.readFile(path)).toBe(original.replace(readShortcutUrl(original), 'https://first.test/fern')))
+    expect(mock.api.realm.editors.save).toHaveBeenLastCalledWith(first, expect.stringContaining('https://first.test/fern'), expect.any(Object), expect.any(String))
     view.rerender(<><UrlFileView relPath={path} tab={{ id: first.tabId, folderPath: path }} mountedView={{ ...first }} /><UrlFileView relPath={path} tab={{ id: second.tabId, folderPath: path }} mountedView={{ ...second }} /></>)
-    expect(mock.api.vault.editors.register).toHaveBeenCalledTimes(2)
+    expect(mock.api.realm.editors.register).toHaveBeenCalledTimes(2)
   })
 
   it('freezes native and programmatic shortcut changes until a prepared lease is released', async () => {
@@ -70,7 +70,7 @@ describe('Internet shortcut files', () => {
     fireEvent.change(input, { target: { value: 'https://released.test' } })
     expect(input).toHaveValue('https://released.test')
     await expect(mock.api.drivers.files.writeFile(path, 'Overwrite')).rejects.toMatchObject({ code: 'DIRTY_EDITOR' })
-    expect(await mock.api.vault.readFile(path)).toBe(original)
+    expect(await mock.api.realm.readFile(path)).toBe(original)
   })
 
   it('uses managed audio and closes its guest when the file surface unmounts', async () => {
@@ -129,7 +129,7 @@ describe('Internet shortcut files', () => {
     expect(mock.container.querySelector('[data-src]')?.getAttribute('data-src')).toBe(readShortcutUrl(original))
     fireEvent.click(screen.getByRole('button', { name: 'Save URL' }))
     await waitFor(() => expect(mock.container.querySelector('[data-src]')?.getAttribute('data-src')).toBe('https://new.test/über?x=1=2'))
-    expect(await mock.api.vault.readFile(path)).toBe(original.replace(readShortcutUrl(original), 'https://new.test/über?x=1=2'))
+    expect(await mock.api.realm.readFile(path)).toBe(original.replace(readShortcutUrl(original), 'https://new.test/über?x=1=2'))
     expect(screen.getByRole('button', { name: 'Save URL' })).toBeDisabled()
   })
 
@@ -147,8 +147,8 @@ describe('Internet shortcut files', () => {
     fireEvent.change(await address(), { target: { value: 'file:///tmp/file.html' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save URL' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('valid HTTP or HTTPS URL')
-    expect(mock.api.vault.writeFileGuarded).not.toHaveBeenCalled()
-    expect(await mock.api.vault.readFile(path)).toBe(original)
+    expect(mock.api.realm.writeFileGuarded).not.toHaveBeenCalled()
+    expect(await mock.api.realm.readFile(path)).toBe(original)
   })
 
   it('preserves unsaved edits and refuses to overwrite an externally changed file', async () => {
@@ -156,12 +156,12 @@ describe('Internet shortcut files', () => {
     const input = await address()
     fireEvent.change(input, { target: { value: 'https://mine.test' } })
     const external = original.replace(readShortcutUrl(original), 'https://external.test')
-    await mock.api.vault.writeFile(path, external)
-    act(() => mock.emitVaultChanged({ changes: [{ relPath: path, kind: 'change' }] }))
+    await mock.api.realm.writeFile(path, external)
+    act(() => mock.emitRealmChanged({ changes: [{ relPath: path, kind: 'change' }] }))
     expect(input).toHaveValue('https://mine.test')
     fireEvent.click(screen.getByRole('button', { name: 'Save URL' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('changed outside this view')
-    expect(await mock.api.vault.readFile(path)).toBe(external)
+    expect(await mock.api.realm.readFile(path)).toBe(external)
     expect(input).toHaveValue('https://mine.test')
     fireEvent.click(screen.getByRole('button', { name: 'Reload file' }))
     await waitFor(() => expect(input).toHaveValue('https://external.test'))
@@ -170,17 +170,17 @@ describe('Internet shortcut files', () => {
   it('reloads clean views on relevant external changes', async () => {
     const mock = setup()
     const input = await address()
-    await mock.api.vault.writeFile(path, '[InternetShortcut]\nURL=https://external.test')
-    act(() => mock.emitVaultChanged({ changes: [{ relPath: 'Unrelated.url', kind: 'change' }] }))
+    await mock.api.realm.writeFile(path, '[InternetShortcut]\nURL=https://external.test')
+    act(() => mock.emitRealmChanged({ changes: [{ relPath: 'Unrelated.url', kind: 'change' }] }))
     expect(input).toHaveValue(readShortcutUrl(original))
-    act(() => mock.emitVaultChanged({ full: true }))
+    act(() => mock.emitRealmChanged({ full: true }))
     await waitFor(() => expect(input).toHaveValue('https://external.test'))
   })
 
   it('retains the draft and old preview when saving fails, then permits retry', async () => {
     const mock = setup()
     const input = await address()
-    vi.mocked(mock.api.vault.writeFileGuarded).mockRejectedValueOnce(new Error('disk full'))
+    vi.mocked(mock.api.realm.writeFileGuarded).mockRejectedValueOnce(new Error('disk full'))
     fireEvent.change(input, { target: { value: 'https://mine.test' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save URL' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not save')
@@ -193,8 +193,8 @@ describe('Internet shortcut files', () => {
   it('ignores a late read after switching files', async () => {
     const mock = createMockValleyApi({ files: { 'Next.url': '[InternetShortcut]\nURL=https://next.test' } })
     initRuntime(mock.api)
-    let resolve!: (file: Awaited<ReturnType<typeof mock.api.vault.readFileBaseline>>) => void
-    vi.spyOn(mock.api.vault, 'readFileBaseline').mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    let resolve!: (file: Awaited<ReturnType<typeof mock.api.realm.readFileBaseline>>) => void
+    vi.spyOn(mock.api.realm, 'readFileBaseline').mockImplementationOnce(() => new Promise(done => { resolve = done }))
     const view = render(<UrlFileView relPath={path} />)
     view.rerender(<UrlFileView relPath="Next.url" />)
     const input = await address()

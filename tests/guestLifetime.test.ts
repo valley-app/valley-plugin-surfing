@@ -346,15 +346,15 @@ describe('browser guest ownership', () => {
 
   it('keeps old ready and playback bindings revoked after root A→B→A', async () => {
     const { api, emitState, store, execute, close, ready, mediaPlayers } = fixture()
-    const originalRoot = api.getState().vault
+    const originalRoot = api.getState().realm
     const binding = ready(OLD_GUEST, true)
     store.guestEvent(TAB, { type: 'media', guestId: OLD_GUEST, playing: true, audible: true })
     await settle()
     const playback = mediaPlayers[0]
     execute.mockClear()
 
-    emitState({ vault: { path: '/test/surfing-other-vault', name: 'Other', displayName: 'Other' } })
-    emitState({ vault: originalRoot })
+    emitState({ realm: { path: '/test/surfing-other-realm', name: 'Other', displayName: 'Other' } })
+    emitState({ realm: originalRoot })
     binding.onReady({ type: 'ready', guestId: NEW_GUEST, url: 'https://stale.example.test' })
     await settle()
     execute.mockClear()

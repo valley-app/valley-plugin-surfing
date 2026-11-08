@@ -78,19 +78,19 @@ async function clippingPath(
 ): Promise<{ relPath: string; previous: TextDocumentRead | null } | null> {
   const stem = safeClipName(title)
   const initial = `Clippings/${stem}.md`
-  const exists = await api.vault.stat(initial)
+  const exists = await api.realm.stat(initial)
   assertActive()
   if (!exists) return { relPath: initial, previous: null }
   if (collision === 'cancel') return null
   if (collision === 'overwrite') {
-    const previous = await api.vault.readTextDocument(initial)
+    const previous = await api.realm.readTextDocument(initial)
     assertActive()
     if (!previous) throw refused('TARGET_NOT_FOUND', createUiText(api)('surfing.error.readPage'))
     return { relPath: initial, previous }
   }
   for (let index = 2; index < 10_000; index++) {
     const relPath = `Clippings/${stem} (${index}).md`
-    const occupied = await api.vault.stat(relPath)
+    const occupied = await api.realm.stat(relPath)
     assertActive()
     if (!occupied) return { relPath, previous: null }
   }
@@ -136,14 +136,14 @@ const fetchFromCli = (args: string[], flags: Record<string, string | boolean>): 
  */
 export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetcher: WebFetcher): () => Promise<void> {
   const uiText = createUiText(api)
-  const root = api.getState().vault?.path
+  const root = api.getState().realm?.path
   const pending = new Set<Promise<unknown>>()
   let active = true
   let revoked = false
   let disposal: Promise<void> | undefined
-  const offVault = api.subscribeState(['vault'], ({ state }) => { if (state.vault?.path !== root) revoked = true })
+  const offRealm = api.subscribeState(['realm'], ({ state }) => { if (state.realm?.path !== root) revoked = true })
   const assertActive = (): void => {
-    if (!active || revoked || api.getState().vault?.path !== root) throw Object.assign(new Error(uiText('surfing.error.saveClip')), { code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false })
+    if (!active || revoked || api.getState().realm?.path !== root) throw Object.assign(new Error(uiText('surfing.error.saveClip')), { code: 'OWNER_CHANGED', outcome: 'not-applied', retryable: false })
   }
   const accept = <T>(operation: () => Promise<T>): Promise<T> => {
     try { assertActive() } catch (error) { return Promise.reject(error) }
@@ -307,14 +307,14 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
         ].join('\n')
         assertActive()
         const written = target.previous
-          ? await api.vault.writeTextDocumentGuarded(target.relPath, content, target.previous.revisionToken)
-          : await api.vault.createTextDocumentGuarded(target.relPath, content)
+          ? await api.realm.writeTextDocumentGuarded(target.relPath, content, target.previous.revisionToken)
+          : await api.realm.createTextDocumentGuarded(target.relPath, content)
         if (!written.ok) throw written.reason === 'error'
           ? Object.assign(new Error(uiText('surfing.error.saveClip')), { code: 'EFFECT_UNVERIFIED', outcome: 'unknown', retryable: false })
           : refused('REVISION_CONFLICT', uiText('surfing.error.saveClip'))
         let receipt = 'revisionToken' in written ? written.revisionToken : null
         let state: 'applied' | 'reverted' | 'pending' = 'applied'
-        // A guarded vault refusal ('stale'/'conflict') wrote nothing; only 'error' leaves the effect unverified.
+        // A guarded realm refusal ('stale'/'conflict') wrote nothing; only 'error' leaves the effect unverified.
         const guardedFailure = (reason: string, message: string): Error => reason === 'error'
           ? Object.assign(new Error(message), { code: 'EFFECT_UNVERIFIED', outcome: 'unknown', retryable: false })
           : refused('REVISION_CONFLICT', message)
@@ -327,17 +327,17 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
           if (target.previous) {
             const token = receipt!
             receipt = null
-            const result = await api.vault.writeTextDocumentGuarded(target.relPath, direction === 'undo' ? target.previous.content : content, token)
+            const result = await api.realm.writeTextDocumentGuarded(target.relPath, direction === 'undo' ? target.previous.content : content, token)
             if (!result.ok) throw guardedFailure(result.reason, uiText(key))
             receipt = result.revisionToken
           } else if (direction === 'undo') {
             const token = receipt!
             receipt = null
-            const removed = await api.vault.trashTextDocumentGuarded(target.relPath, token)
+            const removed = await api.realm.trashTextDocumentGuarded(target.relPath, token)
             if (!removed.ok) throw guardedFailure(removed.reason, uiText('surfing.error.deleteClip'))
             if (removed.editorConflict || !removed.recoverySaved) throw new Error(uiText(removed.recoverySaved ? 'surfing.error.deletedWithDraft' : 'surfing.error.deletedRecoveryFailed'), { cause: removed })
           } else {
-            const created = await api.vault.createTextDocumentGuarded(target.relPath, content)
+            const created = await api.realm.createTextDocumentGuarded(target.relPath, content)
             if (!created.ok) throw guardedFailure(created.reason, uiText(key))
             receipt = created.revisionToken
           }
@@ -386,7 +386,7 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
   return () => {
     if (disposal) return disposal
     active = false
-    offVault()
+    offRealm()
     for (const off of offs) off()
     return disposal = Promise.allSettled([...pending]).then(() => {})
   }

@@ -125,13 +125,13 @@ function Properties({ store, subject, kind }: { store: WebStore; subject?: Plugi
 }
 
 export function registerSurfingSurfaces(pluginApi: ValleyPluginApi, store: WebStore, ready: Promise<void>): () => void {
-  const root = pluginApi.getState().vault?.path
+  const root = pluginApi.getState().realm?.path
   let active = true, revoked = false
-  const offVault = pluginApi.subscribeState(['vault'], ({ state }) => { if (state.vault?.path !== root) revoked = true })
-  const current = () => active && !revoked && pluginApi.getState().vault?.path === root
-  // An undo/redo after a vault switch or unload would reach another vault's owner; refuse it before any effect.
+  const offRealm = pluginApi.subscribeState(['realm'], ({ state }) => { if (state.realm?.path !== root) revoked = true })
+  const current = () => active && !revoked && pluginApi.getState().realm?.path === root
+  // An undo/redo after a realm switch or unload would reach another realm's owner; refuse it before any effect.
   const scoped = (revert: Revert): Revert => {
-    const check = () => { if (!current()) throw refused('OWNER_CHANGED', uiText('surfing.error.vaultChanged')) }
+    const check = () => { if (!current()) throw refused('OWNER_CHANGED', uiText('surfing.error.realmChanged')) }
     const reapply = revert.reapply
     return { ...revert, run: async ctx => { check(); await revert.run(ctx) }, ...(reapply ? { reapply: async (ctx: CommandContext) => { check(); await reapply(ctx) } } : {}) }
   }
@@ -185,7 +185,7 @@ export function registerSurfingSurfaces(pluginApi: ValleyPluginApi, store: WebSt
     restore: async (state, instanceId) => {
       await ready
       if (surface === 'main_workspace' && filePath(state.path)) {
-        if (!await pluginApi.vault.fileInfo(state.path)) throw new Error(uiText('surfing.shortcut.readError'))
+        if (!await pluginApi.realm.fileInfo(state.path)) throw new Error(uiText('surfing.shortcut.readError'))
         updateSurfingFileBookmark(pluginApi, state.path, state as unknown as SurfingFileBookmarkState)
         await pluginApi.workspace.openFile(state.path)
         return
@@ -251,5 +251,5 @@ export function registerSurfingSurfaces(pluginApi: ValleyPluginApi, store: WebSt
   offs.push(register({ id: 'customize-embed-provider', label: 'Surfing: Customize an embed provider', labelKey: 'surfing.command.customizeEmbedProvider', sideEffect: 'write', paletteSafe: false,
     input: { schema: schema({ id: { type: 'string', minLength: 1, maxLength: 128 } }, ['id']), parse: raw => ({ id: required(object(raw).id, 'id') }) },
     preview: input => input, run: async ({ id }) => { const configuration = await loadEmbedProviders(false); const provider = configuration.providers.find(value => value.id === id); if (!provider) throw refused('TARGET_NOT_FOUND', uiText('surfing.embed.providerMissing')); const saved = await customizeEmbedProvider(provider); return { value: { provider, path: embedProviderPath(provider) }, revert: saved.restorable ? embedProviderFilesRevert(`Customize ${provider.displayName}`, saved, expected => api.backend.call<SavedEmbedProvider>('providers.customize', { id: provider.id, expected })) : null } } }))
-  return () => { active = false; offVault(); offs.forEach((off) => off()) }
+  return () => { active = false; offRealm(); offs.forEach((off) => off()) }
 }
