@@ -3,6 +3,7 @@ import { createMockValleyApi } from './mock'
 import { createStore, type WebStore } from '../src/store'
 import { INCOGNITO_PROFILE_ID } from '../src/profiles'
 import { initRuntime } from '../src/runtime'
+import { watchBrowserCosmetics } from '../src/browserCosmetics'
 
 const TAB = 'web-lifetime'
 const OLD_GUEST = 'bf52c51e-0a38-4e22-91d1-6b763ef41d31'
@@ -58,6 +59,20 @@ afterEach(async () => {
 })
 
 describe('browser guest ownership', () => {
+  it('runs the reconcile sweep only while a view is open and the window is shown', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const { store, ready } = fixture()
+    store.startOverlay()
+    const idle = vi.getTimerCount()
+    ready()
+    expect(vi.getTimerCount()).toBeGreaterThan(idle)
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(vi.getTimerCount()).toBe(idle)
+    hidden.mockRestore()
+    vi.useRealTimers()
+  })
+
   it('rejects a retained ready binding after profile A→B→A and accepts a fresh binding', async () => {
     const { store, ready, navigate, close } = fixture()
     const original = ready()
@@ -439,5 +454,25 @@ describe('browser guest ownership', () => {
     await deleting
     expect(clearData).toHaveBeenCalledTimes(1)
     expect(clearData).toHaveBeenCalledWith(`persist:web_${profileId}`)
+  })
+})
+
+describe('browser cosmetics timer', () => {
+  it('arms no filter timer while the window is hidden and re-arms when it is shown', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    const mock = createMockValleyApi()
+    const before = vi.getTimerCount()
+    const stop = watchBrowserCosmetics(mock.api, OLD_GUEST, 'partition', { active: () => false, revision: () => 0 })
+    expect(vi.getTimerCount()).toBe(before)
+    hidden.mockReturnValue(false)
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(vi.getTimerCount()).toBe(before + 1)
+    hidden.mockReturnValue(true)
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(vi.getTimerCount()).toBe(before)
+    void stop()
+    hidden.mockRestore()
+    vi.useRealTimers()
   })
 })

@@ -240,6 +240,7 @@ export class WebStore {
   private disposal: Promise<void> | undefined
 
   private views = new Map<string, WebviewEl>()
+  private overlayStarted = false
   private cosmetics = new Map<string, () => Promise<void>>()
   private browserGuests = new Map<string, string>()
   private hosts = new Set<string>()
@@ -1182,7 +1183,16 @@ export class WebStore {
 
   startOverlay(): void {
     if (this.disposed) return
-    if (this.reconcileTimer == null) this.reconcileTimer = window.setInterval(() => this.reconcile(), 1500)
+    this.overlayStarted = true
+    document.addEventListener('visibilitychange', this.syncReconcileTimer)
+    this.syncReconcileTimer()
+  }
+
+  /** The reconcile sweep only has work while a view exists and the window is shown. */
+  private readonly syncReconcileTimer = (): void => {
+    const wanted = this.overlayStarted && !this.disposed && this.views.size > 0 && !document.hidden
+    if (wanted && this.reconcileTimer == null) this.reconcileTimer = window.setInterval(() => this.reconcile(), 1500)
+    else if (!wanted && this.reconcileTimer != null) { window.clearInterval(this.reconcileTimer); this.reconcileTimer = null }
   }
 
   mountTab(id: string): () => void {
@@ -1248,6 +1258,7 @@ export class WebStore {
       })
       this.guestLifetimes.set(id, owner)
       this.views.set(id, value)
+      this.syncReconcileTimer()
     }
     const view = this.views.get(id)
     if (!view) return
@@ -1283,6 +1294,7 @@ export class WebStore {
     if (!preserveTarget) this.guestTargets.delete(id)
     this.browserGuests.delete(id)
     this.views.delete(id)
+    this.syncReconcileTimer()
     const closing = owner ? owner.dispose(cosmetics) : cosmetics ? cosmetics() : Promise.resolve()
     void this.trackGuestWork(closing).catch(error => { this.guestFailure ??= error })
     return closing
@@ -1309,8 +1321,8 @@ export class WebStore {
     this.offBrowser()
     this.offState()
     this.offTabs()
-    if (this.reconcileTimer != null) clearInterval(this.reconcileTimer)
-    this.reconcileTimer = null
+    this.syncReconcileTimer()
+    document.removeEventListener('visibilitychange', this.syncReconcileTimer)
     for (const id of this.views.keys()) this.disposeView(id)
     this.hosts.clear()
     this.listeners.clear()

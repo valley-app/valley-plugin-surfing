@@ -56,10 +56,16 @@ export function watchBrowserCosmetics(api: ValleyPluginApi, guestId: string, par
     track(api.drivers.browser.styles(guestId, 'page-filter', '').then(() => update()).catch(error => console.error(error)))
   })
   track(update())
-  const timer = setInterval(() => track(update()), 2000)
+  let timer: ReturnType<typeof setInterval> | undefined
+  const syncTimer = (): void => {
+    if (document.hidden) { if (timer !== undefined) clearInterval(timer); timer = undefined }
+    else if (timer === undefined) timer = setInterval(() => track(update()), 2000)
+  }
+  document.addEventListener('visibilitychange', syncTimer)
+  syncTimer()
   return () => {
     if (disposal) return disposal
-    active = false; off(); clearInterval(timer)
+    active = false; off(); document.removeEventListener('visibilitychange', syncTimer); if (timer !== undefined) clearInterval(timer)
     return disposal = (async () => { while (work.size) await Promise.allSettled([...work]) })()
   }
 }
