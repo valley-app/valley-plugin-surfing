@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "source": {
-    "commit": "fd9e39df12fbae9361106d5469f428026bfa0bb5",
+    "commit": "a184e7ab95c24bd4905c7a45895fa65edfc440ce",
     "clean": true
   },
   "packages": [
     {
       "name": "@valley/plugin-sdk",
-      "version": "8.0.0",
-      "file": "valley-plugin-sdk-8.0.0.tgz",
-      "sha256": "e7bf41eb7009fc02c3ad9ccf51bb362fbddbd39a5b5f5aee158760bcf6cd5ed6"
+      "version": "8.1.0",
+      "file": "valley-plugin-sdk-8.1.0.tgz",
+      "sha256": "8b52f72cad4d91bc8ce4af88e22cbfa32995d0bb26b2ed8e7d2e38bf07fab0ba"
     },
     {
       "name": "@valley/plugin-tools",
@@ -19,9 +19,9 @@
     },
     {
       "name": "@valley/plugin-testkit",
-      "version": "8.0.0",
-      "file": "valley-plugin-testkit-8.0.0.tgz",
-      "sha256": "6a4cff1ba2ba0db13aff2692cb3a6fe28681466c354bb9ab424e7e23d958183d"
+      "version": "8.1.0",
+      "file": "valley-plugin-testkit-8.1.0.tgz",
+      "sha256": "9fe6f85bf448f930e074e74893c0821914d1a034f6affc9dcc895d773176017a"
     }
   ]
 }

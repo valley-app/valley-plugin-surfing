@@ -162,6 +162,7 @@ export function registerWebCommands(api: ValleyPluginApi, store: WebStore, fetch
   const offs = [
     register({
       id: 'open',
+      menu: false,
       label: 'Surfing: Open a website in a new tab', labelKey: 'auto.e4ab509cac59',
       paletteSafe: true,
       sideEffect: 'write',

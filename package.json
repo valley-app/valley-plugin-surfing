@@ -1,6 +1,6 @@
 {
   "name": "@valley/plugin-surfing",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -25,8 +25,8 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@types/turndown": "^5.0.6",
-    "@valley/plugin-sdk": "file:vendor/valley-plugin-sdk-8.0.0.tgz",
-    "@valley/plugin-testkit": "file:vendor/valley-plugin-testkit-8.0.0.tgz",
+    "@valley/plugin-sdk": "file:vendor/valley-plugin-sdk-8.1.0.tgz",
+    "@valley/plugin-testkit": "file:vendor/valley-plugin-testkit-8.1.0.tgz",
     "@valley/plugin-tools": "file:vendor/valley-plugin-tools-6.0.0.tgz",
     "ajv": "8.20.0",
     "jsdom": "24.1.3",
